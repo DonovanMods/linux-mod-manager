@@ -38,6 +38,7 @@ import { navigate, modPathEditPath, contextPath } from "../router.js";
 import { codeSpans } from "../errortext.js";
 import { conflictLabel } from "../conflicts.js";
 import { PlayButton } from "./playbutton.js";
+import { unchangedSummary } from "../unchanged.js";
 
 // UPDATES_BATCH_ORIGIN is the Updates card's own "Update selected" control -
 // distinct from a single-mod update's own "mod:{source}/{id}:update"
@@ -120,6 +121,8 @@ export function AttentionCards({
   // revision is an update, so it brings the Updates card on screen.
   const revision = updates?.collection_revision ?? null;
   const collectionLine = collectionLocked > 0 || Boolean(revision);
+  // issue 672: the mods the check answered from their record.
+  const unchanged = updates?.unchanged ?? 0;
   // issue 582: sources that refused the check for want of a key. The
   // report's error was never rendered, so a refusal left the card silent;
   // each now names its source and links to its key.
@@ -230,6 +233,7 @@ export function AttentionCards({
           restored=${restored}
           skips=${skips}
           revision=${revision}
+          unchanged=${unchanged}
           profile=${updates?.profile}
           error=${errors.updates}
           onRetry=${actions.reloadUpdates}
@@ -292,6 +296,13 @@ export function AttentionCards({
           actions=${actions}
           quiet
         />`
+      }
+      ${
+        !updatesCardShown &&
+        unchanged > 0 &&
+        html`<p class="skipped-updates" data-testid="updates-unchanged">
+          ${`${unchangedSummary(unchanged)}. Check for updates asks about every mod.`}
+        </p>`
       }
       ${
         skippedRows.length > 0 &&
@@ -657,6 +668,7 @@ function UpdatesCard({
   restored = [],
   skips = null,
   revision = null,
+  unchanged = 0,
   profile = "",
   error,
   onRetry,
@@ -772,6 +784,12 @@ function UpdatesCard({
           state=${state}
           actions=${actions}
         />`
+      }
+      ${
+        unchanged > 0 &&
+        html`<p class="card__meta" data-testid="updates-unchanged">
+          ${`${unchangedSummary(unchanged)}.`}
+        </p>`
       }
       ${
         autoUpdate &&
@@ -1400,6 +1418,10 @@ export function verifyCoverage(result) {
       `${locked} left to the collection, not checked against their source`,
     );
   }
+  // issue 672: the mods whose version verify had already confirmed and
+  // whose source says they have not changed since.
+  const unchanged = unchangedSummary(result?.version_unchanged ?? 0);
+  if (unchanged) parts.push(unchanged);
   if (parts.length === 0) return "";
   const mods = result?.mods ?? 0;
   return `${mods} mod${mods === 1 ? "" : "s"} checked: ${parts.join("; ")}`;

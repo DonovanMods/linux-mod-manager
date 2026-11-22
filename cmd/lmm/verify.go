@@ -16,7 +16,11 @@ import (
 )
 
 var (
-	verifyFix     bool
+	verifyFix bool
+	// verifyRefresh is --refresh (#672): ask every mod's source about its
+	// version again, even one verify already confirmed that has not
+	// changed since.
+	verifyRefresh bool
 	verifyProfile string
 )
 
@@ -267,6 +271,7 @@ Examples:
 
 func init() {
 	verifyCmd.Flags().BoolVar(&verifyFix, "fix", false, "re-download missing files, fill missing checksums, repair version records, remove stale lmm-deployed files")
+	verifyCmd.Flags().BoolVar(&verifyRefresh, "refresh", false, "check every mod's recorded version against its source, including mods unchanged since the last check")
 	verifyCmd.Flags().StringVarP(&verifyProfile, "profile", "p", "", "profile to verify (default: active profile)")
 
 	rootCmd.AddCommand(verifyCmd)
@@ -328,7 +333,7 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 	// it never answers from core's unchanged-installation memo (#336) - not
 	// even for the shape that would otherwise qualify. The memo exists for
 	// the web UI's repeated hydrates, not for a typed command.
-	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter, Force: true}
+	opts := core.VerifyOptions{Tier: core.VerifyFull, Fix: verifyFix, ModFilter: modFilter, Force: true, Refresh: verifyRefresh}
 	verifyAuthEnvVars = nil
 	if !jsonOutput {
 		if auth, authErr := app.AuthStatus(ctx, svc); authErr == nil {
@@ -376,6 +381,7 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 			fmt.Println()
 			printUnverified(result)
 			printCollectionLocked(result)
+			printUnchanged(result.VersionUnchanged, "lmm verify --refresh") // #672
 		}
 		if result.Issues > 0 || result.Warnings > 0 {
 			if result.Mods == 0 {
@@ -391,6 +397,7 @@ func doVerify(ctx context.Context, svc *core.Service, game *domain.Game, args []
 	fmt.Println()
 	printUnverified(result)
 	printCollectionLocked(result)
+	printUnchanged(result.VersionUnchanged, "lmm verify --refresh") // #672
 
 	if result.Checked == 0 && modFilter != "" && result.Mods == 0 {
 		// #429: Checked stays 0 for a filter that matched an external

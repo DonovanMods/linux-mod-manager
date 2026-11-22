@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -12,6 +13,9 @@ import (
 // Updater checks for and applies mod updates
 type Updater struct {
 	registry *source.Registry
+	// checks keeps the per-mod check record (#672, mod_checks.go); nil
+	// keeps none, and every mod is checked in full.
+	checks modCheckStore
 }
 
 // NewUpdater creates a new updater
@@ -35,13 +39,15 @@ func NewUpdater(registry *source.Registry) *Updater {
 // it is left out of both, and the rest of that source's check stands.
 // checkUpdates is the variant that also names those mods.
 func (u *Updater) CheckUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, error) {
-	updates, _, err := u.checkUpdates(ctx, game, installed, sink, opts)
+	updates, _, _, err := u.checkUpdates(ctx, game, installed, sink, opts)
 	return updates, err
 }
 
 // checkUpdates is CheckUpdates, also returning the installed mods their
-// source's catalog no longer has, in installed order.
-func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, []CatalogModRef, error) {
+// source's catalog no longer has, in installed order, and how many mods
+// were answered from their check record because their source said they
+// had not changed (#672).
+func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed []domain.InstalledMod, sink EventSink, opts UpdateCheckOptions) ([]domain.Update, []CatalogModRef, int, error) {
 	var checkable []domain.InstalledMod
 	for _, mod := range installed {
 		if UpdateCheckable(mod) {
@@ -50,8 +56,16 @@ func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed
 	}
 
 	if len(checkable) == 0 {
-		return nil, nil, nil
+		return nil, nil, 0, nil
 	}
+	// #672: a mod its source says has not changed since lmm last checked
+	// it is answered from that check's record, unless the caller asked to
+	// refresh.
+	var checks *modChecks
+	if u.checks != nil && game != nil && !opts.Refresh {
+		checks = &modChecks{store: u.checks, gameID: game.ID}
+	}
+	unchangedTotal := 0
 
 	// Group mods by source
 	bySource := make(map[string][]domain.InstalledMod)
@@ -92,7 +106,7 @@ func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed
 	for sourceID, mods := range bySource {
 		select {
 		case <-ctx.Done():
-			return allUpdates, nil, ctx.Err()
+			return allUpdates, nil, unchangedTotal, ctx.Err()
 		default:
 		}
 
@@ -119,14 +133,35 @@ func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed
 		}
 
 		var progress source.UpdateProgressFunc
+		batchTotal := len(mods)
 		if sink != nil {
-			progress = func(n, total int, name string) {
+			progress = func(n, _ int, name string) {
 				sink(UpdateCheckEvent{
-					Scope: Scope{Op: OpUpdateCheck, ModName: name, Index: n, Total: total}, SourceID: sourceID,
+					Scope: Scope{Op: OpUpdateCheck, ModName: name, Index: n, Total: batchTotal}, SourceID: sourceID,
 					GlobalIndex: batchOffset + n, GlobalTotal: globalTotal,
 				})
 			}
 		}
+
+		// #672: the mods the record answers come first, each still ticked,
+		// and the source sees only the rest - its ticks after them.
+		started := time.Now()
+		answered, unchanged, rest := checks.answerUpdates(ctx, src, sourceID, mods)
+		unchangedTotal += len(unchanged)
+		allUpdates = append(allUpdates, answered...)
+		if progress != nil && len(unchanged) > 0 {
+			for i, mod := range unchanged {
+				progress(i+1, batchTotal, mod.Name)
+			}
+			base, skip := progress, len(unchanged)
+			progress = func(n, total int, name string) { base(skip+n, total, name) }
+		}
+		if len(rest) == 0 {
+			continue
+		}
+		mods = rest
+		var checked checkedMods
+		checkCtx := checked.watch(ctx)
 
 		var updates []domain.Update
 		// #269: a source that caches remote metadata gets told whether the
@@ -134,13 +169,15 @@ func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed
 		// way, so this branch replaces (rather than sits beside) the
 		// progress-reporter one for such a source.
 		if refresher, ok := src.(source.RefreshingUpdateChecker); ok {
-			updates, err = refresher.CheckUpdatesRefreshing(ctx, mods, opts.Refresh, progress)
+			updates, err = refresher.CheckUpdatesRefreshing(checkCtx, mods, opts.Refresh, progress)
 		} else if rep, ok := src.(source.UpdateProgressReporter); ok && progress != nil {
-			updates, err = rep.CheckUpdatesWithProgress(ctx, mods, progress)
+			updates, err = rep.CheckUpdatesWithProgress(checkCtx, mods, progress)
 		} else {
-			updates, err = src.CheckUpdates(ctx, mods)
+			updates, err = src.CheckUpdates(checkCtx, mods)
 		}
-		allUpdates = append(allUpdates, sanitizeSourceUpdates(updates)...) // #594
+		updates = sanitizeSourceUpdates(updates) // #594
+		allUpdates = append(allUpdates, updates...)
+		checks.recordUpdates(ctx, sourceID, mods, &checked, updates, started)
 		missing, err := splitCatalogMissing(mods, err)
 		for id := range missing {
 			catalogMissing[domain.ModKey(sourceID, id)] = true
@@ -158,9 +195,9 @@ func (u *Updater) checkUpdates(ctx context.Context, game *domain.Game, installed
 	}
 
 	if len(checkErrs) > 0 {
-		return allUpdates, missingRefs, fmt.Errorf("update check had %d source error(s): %w", len(checkErrs), errors.Join(checkErrs...))
+		return allUpdates, missingRefs, unchangedTotal, fmt.Errorf("update check had %d source error(s): %w", len(checkErrs), errors.Join(checkErrs...))
 	}
-	return allUpdates, missingRefs, nil
+	return allUpdates, missingRefs, unchangedTotal, nil
 }
 
 // wrapSourceCheckError attributes a source's check failure to that source.
@@ -393,6 +430,15 @@ type UpdateCheckReport struct {
 	// reported by the one check that cleared it; `lmm serve` keeps showing
 	// it until the user's explicit check. omitempty.
 	ManualOnlyCleared []ManualOnlyCleared `json:"manual_only_cleared,omitempty"`
+
+	// Unchanged counts the checked mods answered from what lmm recorded
+	// the last time it checked them, because their source said they had
+	// not changed since (#672): their file lists were not fetched again.
+	// An update found then is in Updates as before. A frontend says
+	// "N unchanged since the last check"; an explicit refresh (`lmm update
+	// --refresh`, the web UI's Check for updates) asks about every mod and
+	// leaves this 0. omitzero.
+	Unchanged int `json:"unchanged,omitzero"`
 }
 
 // CountUpdateSkips tallies why CheckUpdates will skip mods in installed. A mod
@@ -548,6 +594,7 @@ func (s *Service) CheckGameUpdateReport(ctx context.Context, game *domain.Game, 
 		CatalogMissing:    res.catalogMissing,
 		SkippedUpdates:    res.skipped,
 		ManualOnlyCleared: res.cleared,
+		Unchanged:         res.unchanged,
 	}
 	report.Skipped.Updates = len(res.skipped)
 	// #673: the collection is checked here, in the report a frontend shows,
@@ -579,6 +626,8 @@ type gameUpdateCheck struct {
 	// locks counts the mods the profile's collection locks, which were not
 	// checked (#667): Locked, Collection and CollectionSync only.
 	locks UpdateSkips
+	// unchanged counts the mods answered from their check record (#672).
+	unchanged int
 }
 
 // checkGameUpdates is CheckGameUpdates' body, also returning what
@@ -615,7 +664,7 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 	// #592: the sources report every mod they fetch, and the names they
 	// report are recorded on the rows - the backfill costs no request.
 	checkCtx, fetched := withFetchedMods(ctx)
-	updates, catalogMissing, checkErr := s.NewUpdater().checkUpdates(checkCtx, game, drift.overlay(installed), sink, opts)
+	updates, catalogMissing, unchanged, checkErr := s.NewUpdater().checkUpdates(checkCtx, game, drift.overlay(installed), sink, opts)
 	s.backfillCategoryNames(ctx, game.ID, installed, fetched)
 	// #590: each gone mod's likely new identity, one search apiece.
 	s.fillCatalogSuccessors(ctx, game.ID, installed, catalogMissing)
@@ -656,7 +705,7 @@ func (s *Service) checkGameUpdates(ctx context.Context, game *domain.Game, profi
 	}
 
 	offered, skipped := splitSkippedUpdates(installed, updates)
-	return gameUpdateCheck{updates: offered, drift: drift, catalogMissing: catalogMissing, skipped: skipped, cleared: cleared, locks: locks}, checkErr
+	return gameUpdateCheck{updates: offered, drift: drift, catalogMissing: catalogMissing, skipped: skipped, cleared: cleared, locks: locks, unchanged: unchanged}, checkErr
 }
 
 // splitSkippedUpdates separates the updates offering a version the user

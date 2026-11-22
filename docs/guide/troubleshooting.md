@@ -100,6 +100,13 @@ collection pins their files, and verify still checks those files against
 the hashes it recorded. The Health card and `lmm verify` say how many mods
 were left to the collection.
 
+Verify also checks each mod's recorded version against its site. Once it
+has, it doesn't ask again until the site says the mod has changed:
+the Health card and `lmm verify` say how many mods were "unchanged since
+the last check, not asked again". The files themselves are still checked
+every time. **Re-verify** and `lmm verify --refresh` ask the site about
+every mod.
+
 ## Turn one mod off
 
 Not sure which mod is causing trouble? Turn mods off one at a time with the

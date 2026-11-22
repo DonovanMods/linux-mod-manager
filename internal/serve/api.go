@@ -534,6 +534,10 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	// that exact value counts, so a hydrate cannot accidentally spell the
 	// expensive request.
 	force := r.URL.Query().Get("force") == "1"
+	// ?refresh=1 (#672) asks every mod's source about its version again,
+	// including a mod verify already confirmed that has not changed since:
+	// Re-verify sends it. It implies force.
+	refresh := r.URL.Query().Get("refresh") == "1"
 	// ?progress= (#583) watches the run if there is one; it never opts out
 	// of the memo (core.VerifyReportWithProgress).
 	token, ok := s.progressToken(w, r)
@@ -542,7 +546,7 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	progress := s.newReadReporter(token, readHealth, sel)
 	report, err := s.svc.VerifyReportWithProgress(progress.watch(r.Context()), sel.Game, sel.Profile,
-		core.VerifyOptions{Tier: core.VerifyFull, Force: force}, progress.sink())
+		core.VerifyOptions{Tier: core.VerifyFull, Force: force, Refresh: refresh}, progress.sink())
 	if err != nil {
 		s.writeAPIError(w, http.StatusInternalServerError, err)
 		return

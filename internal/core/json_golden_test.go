@@ -1542,6 +1542,17 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #672: a verify whose version pass did not ask again about the
+			// mods it had already confirmed and that had not changed.
+			"verify_result_version_unchanged",
+			core.VerifyResult{Checked: 120, HasFiles: true, Mods: 60, VersionUnchanged: 58, CheckedAt: fixedTime},
+		},
+		{
+			// #672: --refresh asks every mod's source again.
+			"verify_options_refresh",
+			core.VerifyOptions{Tier: core.VerifyFull, Force: true, Refresh: true},
+		},
+		{
 			"converged_file",
 			core.ConvergedFile{
 				Path: "Data/textures/old.dds", Reason: "no longer provided by nexusmods/42",
@@ -2126,6 +2137,18 @@ func TestJSONGoldens(t *testing.T) {
 				Profile: "default",
 				Updates: nil,
 				Skipped: core.UpdateSkips{Pinned: 2, Local: 1},
+			},
+		},
+		{
+			// #672: a check that answered most mods from their record,
+			// because their source said they had not changed.
+			"update_check_report_unchanged",
+			core.UpdateCheckReport{
+				GameID:    "skyrim-se",
+				Profile:   "default",
+				Updates:   nil,
+				Skipped:   core.UpdateSkips{Pinned: 2},
+				Unchanged: 340,
 			},
 		},
 		{

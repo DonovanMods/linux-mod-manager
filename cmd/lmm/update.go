@@ -186,7 +186,7 @@ func init() {
 	updateCmd.Flags().StringVarP(&updateProfile, "profile", "p", "", "profile to check (default: active profile)")
 	updateCmd.Flags().BoolVar(&updateAll, "all", false, "apply all available updates")
 	updateCmd.Flags().BoolVar(&updateDryRun, "dry-run", false, "show what would update without applying")
-	updateCmd.Flags().BoolVar(&updateRefresh, "refresh", false, "bypass cached source metadata and locally cached source indexes (Steam Workshop caches for hours; the Thunderstore index for six)")
+	updateCmd.Flags().BoolVar(&updateRefresh, "refresh", false, "ask every mod's source again: bypass cached source metadata, locally cached source indexes (Steam Workshop caches for hours; the Thunderstore index for six) and the record of mods unchanged since the last check")
 	updateCmd.Flags().BoolVarP(&updateForce, "force", "f", false, "continue even if hooks fail")
 	updateCmd.Flags().BoolVar(&updateSkipAll, "skip-all", false, "skip every update the check offers now, without pinning (each mod's offer is hidden until a newer version appears)")
 	updateCmd.Flags().BoolVar(&updateUnskipAll, "unskip-all", false, "clear every skipped update, so the check offers each again")
@@ -451,6 +451,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		} else {
 			fmt.Println("All mods are up to date.")
 		}
+		printUnchanged(report.Unchanged, "lmm update --refresh") // #672
 		if skips.Total() > 0 {
 			fmt.Println()
 			printSkipped(skips, profileName)
@@ -511,6 +512,7 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 		}
 
 		fmt.Printf("\n%s\n", colorYellow(fmt.Sprintf("%d update(s) available.", len(updates))))
+		printUnchanged(report.Unchanged, "lmm update --refresh") // #672
 		if skips := report.Skipped; skips.Total() > 0 {
 			fmt.Println()
 			printSkipped(skips, profileName)

@@ -3464,7 +3464,9 @@ const actions = {
   // unchanged-installation memo (issue 336): a user pressing it is asking
   // for a fresh look, while the hydrate that runs on every route change and
   // job completion is exactly the repeated caller the memo exists for.
-  reloadHealth: () => reload("health", "/api/v1/health?force=1"),
+  // issue 672: Re-verify (and the library's Verify) is the explicit check,
+  // so it also asks every mod's source again (?refresh=1).
+  reloadHealth: () => reload("health", "/api/v1/health?force=1&refresh=1"),
   reloadConflicts: () => reload("conflicts", "/api/v1/conflicts"),
   // issue 668: "Mark as intended" / "Unmark" on a conflict, and "Mark all
   // as intended" - single-step writes; the report is re-read after, since
