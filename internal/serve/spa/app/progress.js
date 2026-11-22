@@ -397,7 +397,8 @@ const switchingImports = new Set();
  * go back from where the import left it (issue 664). */
 function importSwitchStep(frame) {
   if (!frame.job_id) return false;
-  if (frame.op === "import" && frame.phase === "import_switching") {
+  // The phase alone names the step: only an import emits it.
+  if (frame.phase === "import_switching") {
     switchingImports.add(frame.job_id);
     if (switchingImports.size > REACHED_LIMIT) {
       switchingImports.delete(switchingImports.values().next().value);
