@@ -356,6 +356,28 @@ func TestJSONGolden_Conflicts(t *testing.T) {
 	})
 }
 
+// TestJSONGolden_ConflictsAck pins `lmm conflicts ack/unack --json` (#668):
+// core.KnownConflictsResult.
+func TestJSONGolden_ConflictsAck(t *testing.T) {
+	t.Run("ack", func(t *testing.T) {
+		svc, game := setupConflictsTest(t)
+		seedTwinConflictFixture(t, svc, game)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doConflictsAck(context.Background(), svc, game, []string{"b", "a"}) })
+		assertJSONCLIGolden(t, "conflicts_ack", out)
+	})
+
+	t.Run("unack_nothing", func(t *testing.T) {
+		svc, game := setupConflictsTest(t)
+		seedTwinConflictFixture(t, svc, game)
+		withJSONOutput(t)
+
+		out := captureStdout(t, func() error { return doConflictsUnack(context.Background(), svc, game, []string{"a", "b"}) })
+		assertJSONCLIGolden(t, "conflicts_unack_nothing", out)
+	})
+}
+
 // --- mod show ---
 
 func TestJSONGolden_ModShow(t *testing.T) {

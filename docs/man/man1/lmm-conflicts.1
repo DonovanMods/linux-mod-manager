@@ -22,11 +22,19 @@ apply)" - the deployed file is out of date with the current load order
 until you redeploy.
 
 .PP
+A conflict you intend - the winner is meant to override the other mods'
+files - can be marked known with "lmm conflicts ack <winner> <loser>"
+(see "lmm conflicts ack --help"). Known conflicts are folded into a count;
+--all lists them too. A collection profile marks the conflicts between
+its own mods known when it is imported.
+
+.PP
 --json emits {game_id, profile, conflicts: [{path, owner, also_in,
-load_order_winner, stale}]}, where owner, each also_in entry and
+load_order_winner, stale, known}]}, where owner, each also_in entry and
 load_order_winner are {key, name} objects; load_order_winner and stale
 carry the same information as the human output's "Winner:" line and its
-stale suffix.
+stale suffix, and known says the conflict is marked as intended. --json
+always lists every conflict, known or not.
 
 .PP
 Note: File tracking requires mods to be installed/deployed with lmm version 0.9.0+.
@@ -36,9 +44,14 @@ Older mods may need to be redeployed to track their files.
 Examples:
   lmm conflicts --game skyrim-se
   lmm conflicts --game skyrim-se --profile survival
+  lmm conflicts --game skyrim-se --all
 
 
 .SH OPTIONS
+\fB--all\fP[=false]
+	list known (intended) conflicts too
+
+.PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for conflicts
 
@@ -81,7 +94,7 @@ Examples:
 
 
 .SH SEE ALSO
-\fBlmm(1)\fP
+\fBlmm(1)\fP, \fBlmm-conflicts-ack(1)\fP, \fBlmm-conflicts-unack(1)\fP
 
 
 .SH HISTORY

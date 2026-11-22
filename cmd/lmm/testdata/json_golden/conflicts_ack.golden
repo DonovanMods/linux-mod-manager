@@ -1,0 +1,19 @@
+{
+  "game_id": "g1",
+  "profile": "default",
+  "added": [
+    {
+      "winner": "src:b",
+      "loser": "src:a",
+      "origin": "user"
+    }
+  ],
+  "removed": [],
+  "known_conflicts": [
+    {
+      "winner": "src:b",
+      "loser": "src:a",
+      "origin": "user"
+    }
+  ]
+}
