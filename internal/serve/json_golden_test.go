@@ -479,6 +479,11 @@ func TestServeJSONGoldens(t *testing.T) {
 			modSkipUpdateRequest{Version: "2.0"},
 		},
 		{
+			// #667: Skip all sends the rows the Updates card shows.
+			"updates_skip_all_request",
+			updatesSkipAllRequest{Updates: []core.UpdateSkipItem{{SourceID: "nexusmods", ModID: "42", NewVersion: "2.0"}}},
+		},
+		{
 			"mod_update_policy_request",
 			modUpdatePolicyRequest{Policy: domain.UpdatePinned},
 		},

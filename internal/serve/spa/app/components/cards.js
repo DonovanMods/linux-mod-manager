@@ -198,8 +198,9 @@ export function AttentionCards({
     return null;
   }
 
-  // The Updates card carries the collection line when it is on screen;
-  // otherwise it is a quiet line under the cards, like the skipped updates.
+  // Whether the Updates card is on screen - its one render condition. It
+  // carries the collection line when it is; otherwise that line is a quiet
+  // one under the cards, like the skipped updates.
   const updatesCardShown =
     updateRows.length > 0 ||
     missingRows.length > 0 ||
@@ -212,13 +213,7 @@ export function AttentionCards({
   return html`
     <section class="attention-cards">
       ${
-        (updateRows.length > 0 ||
-          missingRows.length > 0 ||
-          goneRows.length > 0 ||
-          authRequired.length > 0 ||
-          autoRelink ||
-          restored.length > 0 ||
-          errors.updates) &&
+        updatesCardShown &&
         html`<${UpdatesCard}
           state=${state}
           rows=${updateRows}
@@ -394,7 +389,9 @@ function CollectionLockNote({ skips, profile, state, actions, quiet }) {
     ? ""
     : ` The collection sets ${n === 1 ? "its version" : "their versions"}; unlock a mod to check it yourself.`;
   const origin = collectionUpdateOrigin(profile);
-  return html`<p
+  // A <div>, not a <p>: the InlineJob below can morph into the job's
+  // progress block, which is no phrasing content.
+  return html`<div
     class=${quiet ? "skipped-updates" : "card__meta"}
     data-testid="updates-collection-locked"
   >
@@ -421,7 +418,7 @@ function CollectionLockNote({ skips, profile, state, actions, quiet }) {
         </button>
       <//>`
     }
-  </p>`;
+  </div>`;
 }
 
 /** externalMissingNote is the updates card's one line for issue 538's
@@ -656,8 +653,17 @@ function UpdatesCard({
     if (skippable.length === 0 || skipping) return;
     setSkipping(true);
     try {
+      // The rows on the card, each with the version on screen (as the
+      // per-mod Skip sends its row's): a check that half failed - a source
+      // wanting a key beside one that answered - still skips what is shown.
       await runSkip(actions, "skip", { all: true }, () =>
-        actions.skipAllUpdates(),
+        actions.skipAllUpdates(
+          skippable.map((u) => ({
+            source_id: u.installed_mod.source_id,
+            mod_id: u.installed_mod.id,
+            new_version: u.new_version,
+          })),
+        ),
       );
     } finally {
       setSkipping(false);

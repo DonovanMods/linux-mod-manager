@@ -110,9 +110,9 @@ recompile against the current base pak.
     {pinned, local, locked?, collection?, collection_sync?, updates?},
     error?}. skipped.locked counts the mods the collection locks (never
     checked), skipped.collection names it, and collection_sync says it
-    has an origin 'lmm profile sync --collection' updates from. error is present when the check itself
-    failed partway through; updates/skipped still reflect whatever was
-    learned first. Each updates[] entry carries the whole installed mod
+    has an origin 'lmm profile sync --collection' updates from. error is
+    present when the check itself failed partway through; updates/skipped
+    still reflect whatever was learned first. Each updates[] entry carries the whole installed mod
     under "installed_mod" plus "new_version"; "locked": true means the
     update is reported but will not be applied until the lock moves or
     clears, and "recompile_needed": true with a "recompile_reason" marks
@@ -131,8 +131,9 @@ recompile against the current base pak.
     files, hooks, warnings}. match is "advertised", "mismatch", "listed"
     or "none". Without --dry-run, the single-mod document above.
   - With --skip-all or --unskip-all: {game_id, profile, mods: [{source_id,
-    mod_id, name, version}]}, the mods whose skip was set (version: the one
-    skipped) or cleared (version: the one the skip held).
+    mod_id, name, version}], applied, not_applied}, the mods whose skip was
+    set (version: the one skipped) or cleared (version: the one the skip
+    held); applied counts them.
   - 'update rollback' emits the rollback document: {mod, mod_name,
     from_version, to_version, status, reason, warnings, notes}, with
     status "rolled_back" or "skipped".
@@ -342,7 +343,13 @@ func doUpdate(ctx context.Context, service *core.Service, game *domain.Game, arg
 
 	var sink core.EventSink
 	if verbose && !jsonOutput {
-		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", len(installed), game.Name, profileName)
+		// #667 review: the mods actually asked - not the pinned, local or
+		// collection-locked ones the check leaves out.
+		asked := len(installed)
+		if skips, err := service.CountGameUpdateSkips(ctx, game.ID, profileName, installed); err == nil {
+			asked -= skips.Total()
+		}
+		fmt.Printf("Checking %d mod(s) for updates in %s (profile: %s)...\n", asked, game.Name, profileName)
 		sink = func(e core.Event) {
 			if uc, ok := e.(core.UpdateCheckEvent); ok {
 				// Global, not per-source: a two-source check prints 1/5..5/5

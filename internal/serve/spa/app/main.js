@@ -2534,12 +2534,13 @@ async function setConflictsKnown(call, body) {
 }
 
 /** skipAllUpdates/unskipAllUpdates are issue 667's Skip all and Unskip
- * all: issue 542's skip for every offered update at once, and its undo. The
- * report is re-read, as for one skip, since only the server decides which
- * rows move. */
-async function skipAllUpdates() {
+ * all: issue 542's skip for every update the card shows at once (the rows
+ * themselves, {source_id, mod_id, new_version}), and its undo. The report
+ * is re-read, as for one skip, since only the server decides which rows
+ * move. */
+async function skipAllUpdates(updates) {
   const { game, profile } = store.get().route;
-  const result = await apiSkipAllUpdates({ game, profile });
+  const result = await apiSkipAllUpdates(updates, { game, profile });
   await Promise.all([
     reload("updates", "/api/v1/updates"),
     reload("mods", "/api/v1/mods"),

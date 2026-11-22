@@ -313,11 +313,13 @@ export const skipModUpdate = (sourceID, modID, version, context) =>
 export const unskipModUpdate = (sourceID, modID, context) =>
   post(scoped(`${modPath(sourceID, modID)}/unskip-update`, context), {});
 
-/** Skips every update the check offers now (issue 667: `lmm update
- * --skip-all`), each at the version it offers. Returns
- * core.UpdateSkipAllResult directly. */
-export const skipAllUpdates = (context) =>
-  post(scoped("/api/v1/updates/skip-all", context), {});
+/** Skips each of updates (issue 667: Skip all), a list of {source_id,
+ * mod_id, new_version} - the rows the Updates card shows, so a check that
+ * half failed still skips what the user saw. Returns
+ * core.UpdateSkipAllResult directly: applied, and not_applied for a row
+ * that no longer applies. */
+export const skipAllUpdates = (updates, context) =>
+  post(scoped("/api/v1/updates/skip-all", context), { updates });
 
 /** Clears every skipped update (issue 667: `lmm update --unskip-all`).
  * Returns core.UpdateSkipAllResult directly. */

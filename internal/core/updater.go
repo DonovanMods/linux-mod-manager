@@ -398,6 +398,27 @@ func CountUpdateSkips(installed []domain.InstalledMod) UpdateSkips {
 	return s
 }
 
+// CountGameUpdateSkips is the skip counts a bulk update check of gameID/
+// profileName will report for installed (#667), computed without checking:
+// CountUpdateSkips' pinned and local, plus the mods the profile's
+// collection locks. A frontend saying "Checking N mods" before the check
+// runs subtracts its Total, so the number is the mods actually asked. A
+// missing or unreadable profile locks nothing, as in the check itself;
+// only a cancellation is an error.
+func (s *Service) CountGameUpdateSkips(ctx context.Context, gameID, profileName string, installed []domain.InstalledMod) (UpdateSkips, error) {
+	prof, err := s.NewProfileManager().Get(ctx, gameID, profileName)
+	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return UpdateSkips{}, cerr
+		}
+		prof = nil
+	}
+	_, locks := collectionLockSkips(prof, installed)
+	skips := CountUpdateSkips(installed)
+	skips.Locked, skips.Collection, skips.CollectionSync = locks.Locked, locks.Collection, locks.CollectionSync
+	return skips, nil
+}
+
 // GetAutoUpdateMods filters installed mods to those with auto-update enabled
 func (u *Updater) GetAutoUpdateMods(installed []domain.InstalledMod) []domain.InstalledMod {
 	var autoUpdate []domain.InstalledMod

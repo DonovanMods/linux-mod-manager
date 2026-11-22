@@ -206,3 +206,69 @@ func TestListMods_MarksACollectionsLock(t *testing.T) {
 	assert.False(t, byID["mod2"].LockedByCollection, "a hand lock is the user's")
 	assert.False(t, byID["mod3"].LockedByCollection)
 }
+
+// The web UI's Skip all sends the rows its card shows (#667 review): each is
+// checked against the installed mods, the good ones written in one
+// transaction, and a row that no longer applies is counted, not fatal.
+func TestSkipUpdates_WritesTheRowsGivenAndCountsTheRest(t *testing.T) {
+	svc, game, src := newSkipTestService(t)
+	src.asked = nil
+
+	result, err := svc.SkipUpdates(context.Background(), game.ID, "default", []core.UpdateSkipItem{
+		{SourceID: "src", ModID: "mod1", NewVersion: "2.0"},
+		{SourceID: "src", ModID: "gone", NewVersion: "2.0"}, // not installed
+		{SourceID: "src", ModID: "mod2", NewVersion: "1.0"}, // the installed version: nothing to skip
+		{SourceID: "src", ModID: "mod2", NewVersion: ""},    // no version
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Applied)
+	assert.Equal(t, 3, result.NotApplied)
+	require.Len(t, result.Mods, 1)
+	assert.Equal(t, core.SkippedUpdateRef{SourceID: "src", ModID: "mod1", Name: "Mod One", Version: "2.0"}, result.Mods[0])
+	assert.Empty(t, src.asked, "the rows are the caller's: no update check runs")
+
+	row, err := svc.GetInstalledMod(context.Background(), "src", "mod1", game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, "2.0", row.SkippedVersion)
+	row, err = svc.GetInstalledMod(context.Background(), "src", "mod2", game.ID, "default")
+	require.NoError(t, err)
+	assert.Empty(t, row.SkippedVersion)
+}
+
+func TestSkipAllUpdates_CountsWhatItApplied(t *testing.T) {
+	svc, game, _ := newSkipTestService(t)
+
+	result, err := svc.SkipAllUpdates(context.Background(), game, "default")
+	require.NoError(t, err)
+	assert.Equal(t, 2, result.Applied)
+	assert.Zero(t, result.NotApplied)
+
+	cleared, err := svc.UnskipAllUpdates(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	assert.Equal(t, 2, cleared.Applied)
+}
+
+func TestModDetail_MarksACollectionsLock(t *testing.T) {
+	svc, game, _ := newCollectionLockedService(t, &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "abc123"})
+
+	detail, err := svc.ModDetail(context.Background(), game, "default", "src", "mod1")
+	require.NoError(t, err)
+	require.NotNil(t, detail.Installed)
+	assert.True(t, detail.Installed.LockedByCollection, "the full mod page reads it here before the listing loads")
+
+	hand, err := svc.ModDetail(context.Background(), game, "default", "src", "mod2")
+	require.NoError(t, err)
+	assert.False(t, hand.Installed.LockedByCollection)
+}
+
+func TestCountGameUpdateSkips_MatchesTheReport(t *testing.T) {
+	svc, game, _ := newCollectionLockedService(t, &domain.CollectionOrigin{SourceID: "nexusmods", Slug: "abc123"})
+	installed := installedFor(t, svc, game)
+
+	skips, err := svc.CountGameUpdateSkips(context.Background(), game.ID, "default", installed)
+	require.NoError(t, err)
+	report := skipReport(t, svc, game)
+	assert.Equal(t, report.Skipped.Total(), skips.Total(), "the count a frontend prints before the check is the one the check skips")
+	assert.Equal(t, 1, skips.Locked)
+	assert.Equal(t, "Night City", skips.Collection)
+}

@@ -1584,6 +1584,14 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #667: a lock the profile's collection holds.
+			"installed_detail_locked_by_collection",
+			core.InstalledDetail{
+				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateNotify,
+				Locked: true, LockedVersion: "1.2.3", LockedByCollection: true,
+			},
+		},
+		{
 			"installed_detail",
 			core.InstalledDetail{
 				Version: "1.2.3", Profile: "default", UpdatePolicy: domain.UpdateAuto,
@@ -2217,8 +2225,24 @@ func TestJSONGoldens(t *testing.T) {
 			"update_skip_all_result",
 			core.UpdateSkipAllResult{
 				GameID: "skyrim-se", Profile: "default",
-				Mods: []core.SkippedUpdateRef{{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.3.0"}},
+				Mods:    []core.SkippedUpdateRef{{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.3.0"}},
+				Applied: 1,
 			},
+		},
+		{
+			// #667 review: the web UI's rows, one of which no longer applied.
+			"update_skip_all_result_not_applied",
+			core.UpdateSkipAllResult{
+				GameID: "skyrim-se", Profile: "default",
+				Mods:       []core.SkippedUpdateRef{{SourceID: "nexusmods", ModID: "42", Name: "Sample Mod", Version: "1.3.0"}},
+				Applied:    1,
+				NotApplied: 1,
+			},
+		},
+		{
+			// #667 review: one row of POST /api/v1/updates/skip-all's body.
+			"update_skip_item",
+			core.UpdateSkipItem{SourceID: "nexusmods", ModID: "42", NewVersion: "1.3.0"},
 		},
 		{
 			"skipped_update_ref",

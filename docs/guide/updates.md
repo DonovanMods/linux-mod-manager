@@ -324,7 +324,8 @@ and tells you again when a newer one comes out. Skipping isn't pinning: the
 mod is still checked.
 
 On the Updates card, each mod has a **Skip** button, and **Skip all** skips
-every update the card lists. Skipped updates move to a quiet "N skipped
+every update the card lists, even when the card also says a site couldn't
+be checked. Skipped updates move to a quiet "N skipped
 updates" line under the cards. Open it to **Unskip** one, or **Unskip all**.
 
 In the terminal:

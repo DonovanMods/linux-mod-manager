@@ -270,14 +270,28 @@ func (s *Server) modSettingErrorStatus(ctx context.Context, sourceID, modID stri
 	return http.StatusInternalServerError
 }
 
+// updatesSkipAllRequest is POST /api/v1/updates/skip-all's request body
+// (#667). Updates are the rows to skip - the SPA sends the rows its Updates
+// card shows, each with the new_version on screen, as the per-mod Skip
+// does. Absent (no body, or no "updates"), the server skips whatever its
+// own update check offers, as `lmm update --skip-all` does.
+type updatesSkipAllRequest struct {
+	Updates []core.UpdateSkipItem `json:"updates"`
+}
+
 // handleAPIUpdatesSkipAll answers POST /api/v1/updates/skip-all (#667): the
-// Updates card's "Skip all", core.SkipAllUpdates verbatim - every update the
-// check offers now is skipped, in one write - answering with the
-// core.UpdateSkipAllResult `lmm update --skip-all --json` emits. It takes no
-// body: what to skip is whatever the check offers, as the CLI's flag. A
-// source that needs a credential is 401, as GET /api/v1/updates' is.
+// Updates card's "Skip all", answering with the core.UpdateSkipAllResult
+// `lmm update --skip-all --json` emits.
+//
+// With rows (core.SkipUpdates) no update check runs, so a check that half
+// failed - a source wanting a key beside one that answered - still skips
+// the rows the card showed; a row that no longer applies is counted in
+// not_applied, never a failed batch. Without them, core.SkipAllUpdates runs
+// the check itself and refuses one that did not complete; a source that
+// needs a credential is then 401, as GET /api/v1/updates' is.
 func (s *Server) handleAPIUpdatesSkipAll(w http.ResponseWriter, r *http.Request) {
-	if err := decodeAPIBody(w, r, &struct{}{}); err != nil {
+	var req updatesSkipAllRequest
+	if err := decodeAPIBody(w, r, &req); err != nil {
 		s.writeAPIError(w, http.StatusBadRequest, err)
 		return
 	}
@@ -285,7 +299,13 @@ func (s *Server) handleAPIUpdatesSkipAll(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	result, err := s.svc.SkipAllUpdates(r.Context(), sel.Game, sel.Profile)
+	var result *core.UpdateSkipAllResult
+	var err error
+	if req.Updates != nil {
+		result, err = s.svc.SkipUpdates(r.Context(), sel.Game.ID, sel.Profile, req.Updates)
+	} else {
+		result, err = s.svc.SkipAllUpdates(r.Context(), sel.Game, sel.Profile)
+	}
 	if err != nil {
 		status := http.StatusInternalServerError
 		if errors.Is(err, domain.ErrAuthRequired) {

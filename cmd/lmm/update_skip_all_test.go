@@ -162,3 +162,15 @@ func TestDoModUnlock_SaysTheCollectionLetsGo(t *testing.T) {
 	assert.Contains(t, out, "Mod A", "the unlocked mod is checked, and listed, again")
 	assert.NotContains(t, out, "locked by collection")
 }
+
+func TestDoUpdate_VerboseCountsTheModsAsked(t *testing.T) {
+	svc, game := setupSkipUpdateTest(t)
+	lockByCollection(t, svc, game, true)
+	old := verbose
+	verbose = true
+	t.Cleanup(func() { verbose = old })
+
+	out, err := captureStdoutErr(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	assert.Contains(t, out, "Checking 1 mod(s) for updates", "the collection's mod is not asked, so not counted")
+}

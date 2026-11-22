@@ -1,5 +1,7 @@
 {
   "game_id": "skyrim-se",
   "profile": "default",
-  "mods": []
+  "mods": [],
+  "applied": 0,
+  "not_applied": 0
 }

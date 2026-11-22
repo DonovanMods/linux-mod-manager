@@ -61,6 +61,12 @@ func doUpdateSkipAll(ctx context.Context, service *core.Service, game *domain.Ga
 	for _, m := range result.Mods {
 		fmt.Printf("  %s %s\n", m.Name, m.Version)
 	}
+	if result.NotApplied > 0 {
+		// The check runs before the write; a mod updated or removed in
+		// between is left alone (core.SkipAllUpdates).
+		fmt.Printf("%d update%s changed since the check and %s left alone.\n",
+			result.NotApplied, plural(result.NotApplied), map[bool]string{true: "was", false: "were"}[result.NotApplied == 1])
+	}
 	return nil
 }
 

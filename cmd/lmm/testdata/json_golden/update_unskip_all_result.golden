@@ -8,5 +8,7 @@
       "name": "Mod A",
       "version": "2.0"
     }
-  ]
+  ],
+  "applied": 1,
+  "not_applied": 0
 }

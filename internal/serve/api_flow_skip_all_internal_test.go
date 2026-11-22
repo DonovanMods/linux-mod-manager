@@ -108,3 +108,29 @@ func TestAPIFlow_Updates_CollectionLockedModIsCountedNotListed(t *testing.T) {
 	assert.ElementsMatch(t, []string{"u2", "u3"}, skipAllModIDs(decodeSkipAll(t, rec.Body.Bytes())),
 		"Skip all skips what was offered, never the collection's mods")
 }
+
+// #667 review: the SPA sends the rows its card shows, so Skip all works
+// whatever the check said about other sources; a row that no longer
+// applies is counted, never a failed batch.
+func TestAPIFlow_SkipAll_SkipsTheRowsSent(t *testing.T) {
+	s, svc, game := newUpdatesFixtureServer(t)
+
+	body := `{"updates":[` +
+		`{"source_id":"` + fixtureSourceID + `","mod_id":"u1","new_version":"` + updateToVersion + `"},` +
+		`{"source_id":"` + fixtureSourceID + `","mod_id":"gone","new_version":"` + updateToVersion + `"}]}`
+	rec := doAPI(s, http.MethodPost, skipAllRoute(game, "skip-all"), body)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	result := decodeSkipAll(t, rec.Body.Bytes())
+	assert.Equal(t, []string{"u1"}, skipAllModIDs(result))
+	assert.Equal(t, 1, result.Applied)
+	assert.Equal(t, 1, result.NotApplied, "the mod that is gone is counted, not fatal")
+
+	for id, want := range map[string]string{"u1": updateToVersion, "u2": "", "u3": ""} {
+		row, err := svc.GetInstalledMod(t.Context(), fixtureSourceID, id, game.ID, "default")
+		require.NoError(t, err)
+		assert.Equal(t, want, row.SkippedVersion, id)
+	}
+
+	rec = doAPI(s, http.MethodPost, skipAllRoute(game, "skip-all"), `{"updates":[{"source_id":"x","mod_id":"y","new_vrsion":"1"}]}`)
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "a row is strictly decoded too")
+}

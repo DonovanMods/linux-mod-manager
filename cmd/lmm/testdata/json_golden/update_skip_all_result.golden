@@ -14,5 +14,7 @@
       "name": "Mod B",
       "version": "2.0"
     }
-  ]
+  ],
+  "applied": 2,
+  "not_applied": 0
 }

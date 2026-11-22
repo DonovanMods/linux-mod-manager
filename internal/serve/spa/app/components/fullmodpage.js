@@ -186,6 +186,10 @@ export function FullModPage({ state, route, onThemeChange, actions }) {
     // explicitly - without it the two surfaces disagreed about the same mod,
     // and this one offered a policy SetModUpdatePolicy refuses server-side.
     external: Boolean(settingsSource.external),
+    // issue 667: ModSettingsControls says, beside the Locked box, that
+    // unlocking a collection's mod takes it out of the collection's hands -
+    // carried across for the same reason as external above.
+    locked_by_collection: Boolean(settingsSource.locked_by_collection),
   };
 
   const findings = findingsFor(state.health, modID);

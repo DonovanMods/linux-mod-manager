@@ -2117,14 +2117,21 @@ POST   /api/v1/mods/{source}/{id}/skip-update {"version"}
 POST   /api/v1/mods/{source}/{id}/unskip-update        -> the mod's settings
 POST   /api/v1/mods/{source}/{id}/category {"category"}
                                                        -> the mod's settings
-POST   /api/v1/updates/skip-all?game=&profile=   -> {game_id, profile, mods: [...]}
-POST   /api/v1/updates/unskip-all?game=&profile= -> {game_id, profile, mods: [...]}
+POST   /api/v1/updates/skip-all?game=&profile= {"updates"?}
+                                 -> {game_id, profile, mods: [...], applied, not_applied}
+POST   /api/v1/updates/unskip-all?game=&profile= -> the same document
 GET    /api/v1/categories?game=&profile=   -> {"categories": [...]}
 ```
 
 `skip-all`/`unskip-all` are `lmm update --skip-all`/`--unskip-all` (#667),
 each answering the `core.UpdateSkipAllResult` its `--json` twin prints: the
-mods whose skip was set or cleared. Neither takes a body.
+mods whose skip was set or cleared. `skip-all` takes the rows to skip,
+`{"updates": [{source_id, mod_id, new_version}]}` - the SPA sends the rows
+its Updates card shows, so it works beside a source whose check failed - and
+runs no update check; a row whose mod is gone, or that names the installed
+version, is counted in `not_applied` and left alone. Without `updates` it
+skips whatever its own check offers, refusing a check that did not
+complete. `unskip-all` takes no body.
 
 The first seven are `lmm mod lock`/`unlock`/`set-update`/`convert`/
 `skip-update`/`unskip-update`/`set-category`, each answering the `core.ModSettingResult`

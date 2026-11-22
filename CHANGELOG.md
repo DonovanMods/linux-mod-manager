@@ -55,16 +55,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lmm update <mod-id>`, which names the mod, still asks. Unlocking a
   collection's mod makes it yours and returns it to the checks: the web
   UI's side panel and row menu say so before the click, `lmm mod unlock`
-  says so after, the mod listing carries `locked_by_collection` and the
-  unlock's settings document `left_collection`. There is no cheap check
-  for a new collection revision yet (it would need a source query of its
-  own), so neither frontend announces one.
+  says so after, the mod listing and the mod detail carry
+  `locked_by_collection` and the unlock's settings document
+  `left_collection`. `lmm update -v` counts the mods it actually asks.
+  There is no cheap check for a new collection revision yet (it would need
+  a source query of its own), so neither frontend announces one.
   - **Skip all / Unskip all**: #542's skip for every update offered at
-    once - `lmm update --skip-all` / `--unskip-all` (a new
-    `UpdateSkipAllResult` document under `--json`), `POST
-/api/v1/updates/skip-all` / `unskip-all`, a **Skip all** button on the
-    Updates card and **Unskip all** on the skipped-updates line. One
-    transaction each; a collection's locked mods are never skipped.
+    once. In the terminal, `lmm update --skip-all` / `--unskip-all` (a new
+    `UpdateSkipAllResult` document under `--json`, with `applied` and
+    `not_applied` counts) skips what its own check offers. In the web UI,
+    a **Skip all** button on the Updates card sends the rows the card
+    shows to `POST /api/v1/updates/skip-all` (`{"updates": [...]}`), so it
+    works even when another source's check failed, and **Unskip all** on
+    the skipped-updates line calls `POST /api/v1/updates/unskip-all`. Each
+    writes in one transaction; a row whose mod is gone, or that names the
+    installed version, counts as not applied. A collection's locked mods
+    are never skipped.
 
 - **Search a game's NexusMods collections (#651).** `lmm search
 --collections [query]` lists the game's collections on NexusMods (no API
