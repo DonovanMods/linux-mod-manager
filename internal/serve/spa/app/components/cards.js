@@ -377,11 +377,15 @@ function SkippedUpdates({ rows, actions }) {
   `;
 }
 
-/** collectionUpdateOrigin is the profiles modal's own "Update collection…"
- * origin (profilesmodal.js), so this note's button and that one morph into
- * the same job. */
+/** collectionUpdateOrigin is the collection line's own "Update
+ * collection…" origin: not the profiles modal's
+ * (`profile:<name>:collection-update`), because two controls sharing an
+ * origin both morph into whichever job either started - and while this
+ * line is on Mission Control, a job started from the profiles modal would
+ * finish inline here instead of as the toast its own control's closing
+ * promises (#673: the line now shows for every collection profile). */
 function collectionUpdateOrigin(profile) {
-  return `profile:${profile}:collection-update`;
+  return `updates:${profile}:collection-update`;
 }
 
 /** revisionSentence is issue 673's half of the collection line: the
