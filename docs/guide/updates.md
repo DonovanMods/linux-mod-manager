@@ -420,6 +420,12 @@ server that sends no such tags, or a collection imported before lmm kept
 them, is downloaded in full to check, at most once in five minutes.
 Updating the collection notes the new version's tags.
 
+The check waits at most 20 seconds for the address, so a slow server
+never holds up the update check, and a failed answer is remembered for
+the same five minutes. A collection that carries no version is reported
+as checked with its version unknown, and one older than yours as an
+error, since updating to it would be refused.
+
 Some collections can't be checked:
 
 - **Imported from a file**: there's nowhere to ask. Import the new

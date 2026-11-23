@@ -107,3 +107,16 @@ func TestJSONGolden_UpdateBulkURLCollectionRevision(t *testing.T) {
 	out := captureStdout(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
 	assertJSONCLIGolden(t, "update_bulk_url_collection_revision", out)
 }
+
+// #674 review: a document with no version is said as such, never
+// "revision 0".
+func TestDoUpdate_URLCollectionWithNoVersion(t *testing.T) {
+	srv := newURLRevisionServer(t)
+	srv.version.Store("0")
+	svc, game := importURLCollection(t, srv)
+
+	out, err := captureStdoutErr(t, func() error { return doUpdate(context.Background(), svc, game, nil) })
+	require.NoError(t, err)
+	assert.Contains(t, out, "Collection Shared Setup: checked, but its document carries no version, so lmm can't tell whether it's newer — 'lmm profile sync shared --collection' shows what changed.")
+	assert.NotContains(t, out, "revision 0")
+}

@@ -1625,6 +1625,9 @@ func printCollectionRevision(c *core.CollectionRevisionStatus, profile string) {
 	switch {
 	case c.Available:
 		fmt.Printf("Collection %s: revision %d available (installed %d) — %s updates it.\n", c.Name, c.Latest, c.Installed, sync)
+	case c.Checked && c.LatestUnknown:
+		// #674 review: the collection the address serves has no version.
+		fmt.Printf("Collection %s: checked, but its document carries no version, so lmm can't tell whether it's newer — %s shows what changed.\n", c.Name, sync)
 	case c.Checked && c.InstalledUnknown:
 		// #673 review: no installed revision recorded, nothing to compare.
 		fmt.Printf("Collection %s: latest revision %d (the installed revision isn't recorded) — %s compares them.\n", c.Name, c.Latest, sync)
@@ -1634,11 +1637,12 @@ func printCollectionRevision(c *core.CollectionRevisionStatus, profile string) {
 		// #673 review: #671's hold, said with when it ends.
 		fmt.Printf("Collection %s: %s is holding requests until %s; revision not checked.\n",
 			c.Name, cmp.Or(c.HeldBy, "its source"), c.HeldUntil.Local().Format("15:04"))
+	case c.Reason == core.CollectionUncheckedURL:
+		// #674: an address lmm does not fetch at all; Error says why.
+		fmt.Printf("Collection %s: lmm can't fetch its address (%s), so it can't check it for a new version.\n", c.Name,
+			cmp.Or(c.Error, "not an https address with a host"))
 	case c.Error != "":
 		fmt.Printf("Collection %s: couldn't check for a new revision (%s) — %s checks it.\n", c.Name, c.Error, sync)
-	case c.Reason == core.CollectionUncheckedURL:
-		// #674: every https address is checked; this one is not https.
-		fmt.Printf("Collection %s: its address isn't an https one, so lmm can't check it for a new version.\n", c.Name)
 	case c.Reason == core.CollectionUncheckedFile:
 		fmt.Printf("Collection %s: imported from a file, so lmm can't check for a new version — import the new version with 'lmm profile import <file> --force'.\n", c.Name)
 	default:

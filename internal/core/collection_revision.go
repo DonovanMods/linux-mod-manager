@@ -28,6 +28,8 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/url"
 	"slices"
 	"time"
 
@@ -82,10 +84,16 @@ type CollectionRevisionStatus struct {
 	// InstalledUnknown is set when the profile records no installed
 	// revision: Latest is reported but not compared, so Available is
 	// never set (#673 review). omitzero.
-	InstalledUnknown bool   `json:"installed_unknown,omitzero"`
-	Checked          bool   `json:"checked"`
-	Reason           string `json:"reason,omitempty"`
-	Error            string `json:"error,omitempty"`
+	InstalledUnknown bool `json:"installed_unknown,omitzero"`
+	// LatestUnknown is set when the check answered but the collection it
+	// found carries no version (#674 review: an .lmmc address serving a
+	// document without one, or a 304 for a collection imported without
+	// one): Checked, with nothing to compare, so Latest is 0 and
+	// Available never set. omitzero.
+	LatestUnknown bool   `json:"latest_unknown,omitzero"`
+	Checked       bool   `json:"checked"`
+	Reason        string `json:"reason,omitempty"`
+	Error         string `json:"error,omitempty"`
 	// HeldUntil and HeldBy are set when the source refused the request
 	// because it is holding requests (#671's RetryTransport, a
 	// *source.RetryLaterError): the service (HeldBy, e.g. "NexusMods") and
@@ -101,10 +109,21 @@ type CollectionRevisionStatus struct {
 // enough that a revision published since shows within minutes.
 const collectionRevisionTTL = 5 * time.Minute
 
-// collectionRevisionEntry is one kept answer.
+// collectionRevisionCheckTimeout bounds an .lmmc address's revision check
+// (#674 review): it runs inside `lmm update` and the web Updates card, so
+// a slow address must not stall them for collectionFetchTimeout, the
+// import's and the sync's own deadline. A var for the test.
+var collectionRevisionCheckTimeout = 20 * time.Second
+
+// collectionRevisionEntry is one kept answer: the latest revision, or -
+// for a URL origin, whose failed answers are kept too (#674 review) - why
+// it could not be had.
 type collectionRevisionEntry struct {
-	latest int
-	at     time.Time
+	latest    int
+	failure   string
+	heldUntil time.Time
+	heldBy    string
+	at        time.Time
 }
 
 // collectionRevisionKey keys a kept answer by source, game and slug.
@@ -112,25 +131,41 @@ func collectionRevisionKey(sourceID, gameSourceID, slug string) string {
 	return sourceID + "\x00" + gameSourceID + "\x00" + slug
 }
 
-// keptCollectionRevision is the answer kept for key, if it is fresh.
+// keptCollectionRevision is the latest revision kept for key, if it is
+// fresh and was an answer rather than a failure.
 func (s *Service) keptCollectionRevision(key string) (int, bool) {
-	s.collectionRevisionsMu.Lock()
-	defer s.collectionRevisionsMu.Unlock()
-	e, ok := s.collectionRevisions[key]
-	if !ok || s.now().Sub(e.at) >= collectionRevisionTTL {
+	e, ok := s.keptCollectionEntry(key)
+	if !ok || e.failure != "" {
 		return 0, false
 	}
 	return e.latest, true
 }
 
+// keptCollectionEntry is the entry kept for key, if it is fresh.
+func (s *Service) keptCollectionEntry(key string) (collectionRevisionEntry, bool) {
+	s.collectionRevisionsMu.Lock()
+	defer s.collectionRevisionsMu.Unlock()
+	e, ok := s.collectionRevisions[key]
+	if !ok || s.now().Sub(e.at) >= collectionRevisionTTL {
+		return collectionRevisionEntry{}, false
+	}
+	return e, true
+}
+
 // keepCollectionRevision keeps a successful answer for key.
 func (s *Service) keepCollectionRevision(key string, latest int) {
+	s.keepCollectionEntry(key, collectionRevisionEntry{latest: latest})
+}
+
+// keepCollectionEntry keeps e for key, stamped now.
+func (s *Service) keepCollectionEntry(key string, e collectionRevisionEntry) {
 	s.collectionRevisionsMu.Lock()
 	defer s.collectionRevisionsMu.Unlock()
 	if s.collectionRevisions == nil {
 		s.collectionRevisions = make(map[string]collectionRevisionEntry)
 	}
-	s.collectionRevisions[key] = collectionRevisionEntry{latest: latest, at: s.now()}
+	e.at = s.now()
+	s.collectionRevisions[key] = e
 }
 
 // forgetCollectionRevision drops the kept answer for a collection - a
@@ -221,45 +256,79 @@ func urlRevisionKey(importURL string) string {
 // version - or, for a 200, the version the document now carries. The
 // validators are not updated: they stay the installed version's until a
 // collection update records the new one's, so a newer version is reported
-// until it is taken. A document that is another collection is an error, as
-// the update would refuse it.
+// until it is taken. A document that is another collection, or an older
+// version than the installed one, is an error, as the update would refuse
+// it; one with no version is checked with its version unknown.
+//
+// The request has its own short deadline (collectionRevisionCheckTimeout),
+// and every outcome - a failure too - is kept for the cache window, so an
+// address that is gone or slow is not asked on every page open; refresh
+// asks again.
 func (s *Service) checkURLCollection(ctx context.Context, c *domain.CollectionInfo, importURL string, st *CollectionRevisionStatus, refresh bool) {
 	key := urlRevisionKey(importURL)
 	if !refresh {
-		if latest, ok := s.keptCollectionRevision(key); ok {
-			settleRevision(st, latest)
+		if e, ok := s.keptCollectionEntry(key); ok {
+			applyURLOutcome(st, e)
 			return
 		}
 	}
 	u, err := parseCollectionURL(importURL)
 	if err != nil {
-		st.Reason = CollectionUncheckedURL
+		// Not an address lmm fetches: said as the import would say it.
+		st.Reason, st.Error = CollectionUncheckedURL, err.Error()
 		return
 	}
+	e := s.askURLCollection(ctx, c, u, st.Installed)
+	s.keepCollectionEntry(key, e)
+	applyURLOutcome(st, e)
+}
+
+// askURLCollection is checkURLCollection's request and its reading.
+func (s *Service) askURLCollection(ctx context.Context, c *domain.CollectionInfo, u *url.URL, installed int) collectionRevisionEntry {
+	ctx, cancel := context.WithTimeout(ctx, collectionRevisionCheckTimeout)
+	defer cancel()
 	fetched, err := s.fetchCollection(ctx, u, collectionValidators{etag: c.Origin.ETag, lastModified: c.Origin.LastModified})
 	if err != nil {
-		st.Error = err.Error()
+		e := collectionRevisionEntry{failure: err.Error()}
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() != nil {
+			e.failure = fmt.Sprintf("%s did not answer within %s", domain.RedactURL(u.String()), collectionRevisionCheckTimeout)
+		}
 		var later *source.RetryLaterError
 		if errors.As(err, &later) {
-			st.HeldUntil, st.HeldBy = later.Until, later.Source
+			e.heldUntil, e.heldBy = later.Until, later.Source
 		}
+		return e
+	}
+	if fetched.notModified {
+		return collectionRevisionEntry{latest: installed}
+	}
+	doc, _, _, _, err := s.readCollectionData(fetched.data, true)
+	if err != nil {
+		return collectionRevisionEntry{failure: err.Error()}
+	}
+	latest := doc.Info.Version
+	switch {
+	case c.ID != "" && doc.Info.ID != c.ID:
+		return collectionRevisionEntry{failure: (&CollectionUpdateMismatchError{Code: CollectionUpdateDifferentCollection, ID: c.ID, FetchedID: doc.Info.ID}).Error()}
+	case latest > 0 && installed > 0 && latest < installed:
+		// As PlanCollectionUpdate refuses it.
+		return collectionRevisionEntry{failure: (&CollectionUpdateMismatchError{Code: CollectionUpdateOlderVersion, Version: installed, FetchedVersion: latest}).Error()}
+	}
+	return collectionRevisionEntry{latest: latest}
+}
+
+// applyURLOutcome puts a URL check's outcome, e, on st: its failure, or
+// the version it found - unknown when the collection carries none.
+func applyURLOutcome(st *CollectionRevisionStatus, e collectionRevisionEntry) {
+	if e.failure != "" {
+		st.Error, st.HeldUntil, st.HeldBy = e.failure, e.heldUntil, e.heldBy
 		return
 	}
-	latest := st.Installed
-	if !fetched.notModified {
-		doc, _, _, _, err := s.readCollectionData(fetched.data, true)
-		if err != nil {
-			st.Error = err.Error()
-			return
-		}
-		if c.ID != "" && doc.Info.ID != c.ID {
-			st.Error = (&CollectionUpdateMismatchError{Code: CollectionUpdateDifferentCollection, ID: c.ID, FetchedID: doc.Info.ID}).Error()
-			return
-		}
-		latest = doc.Info.Version
+	if e.latest == 0 {
+		st.Checked, st.LatestUnknown = true, true
+		return
 	}
-	s.keepCollectionRevision(key, latest)
-	settleRevision(st, latest)
+	settleRevision(st, e.latest)
 }
 
 // forgetURLCollectionRevision drops a URL origin's kept answer (#674).

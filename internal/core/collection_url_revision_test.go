@@ -193,3 +193,111 @@ func TestCollectionValidators_AreNeverADocumentsOrAnExports(t *testing.T) {
 	assert.NotContains(t, string(export.Document), "v1-abc")
 	assert.NotContains(t, string(export.Document), "etag")
 }
+
+// #674 review: a document that carries no version is checked, and its
+// version is unknown - never "up to date (revision 0)".
+func TestCollectionURLRevision_ADocumentWithNoVersionIsNotCompared(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.importWithValidators(t)
+	f.validators.Store(&docValidators{etag: etagV2})
+	f.serve(urlDocument(t, "coll-1", 0, versionTwo))
+
+	got := f.urlRevision(t, false)
+	assert.True(t, got.Checked)
+	assert.True(t, got.LatestUnknown)
+	assert.Zero(t, got.Latest)
+	assert.False(t, got.Available)
+	assert.Empty(t, got.Error)
+}
+
+// #674 review: a document older than the installed version is the update's
+// refusal (CollectionUpdateOlderVersion), reported as an error.
+func TestCollectionURLRevision_AnOlderVersionIsAnError(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.validators.Store(&docValidators{etag: etagV2})
+	f.importURL(t, urlDocument(t, "coll-1", 2, nil))
+	f.validators.Store(&docValidators{etag: etagV1})
+	f.serve(urlDocument(t, "coll-1", 1, nil))
+
+	got := f.urlRevision(t, false)
+	assert.False(t, got.Checked)
+	assert.False(t, got.Available)
+	assert.Contains(t, got.Error, "version 1, older than the profile's version 2")
+}
+
+// #674 review: a 304 for a collection imported with no version is unchanged
+// - but its version is still unknown, never "revision 0".
+func TestCollectionURLRevision_NotModifiedWithNoVersionIsNotCompared(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.validators.Store(&docValidators{etag: etagV1})
+	f.importURL(t, urlDocument(t, "coll-1", 0, nil))
+
+	got := f.urlRevision(t, false)
+	assert.Equal(t, etagV1, f.lastDocRequest().Get("If-None-Match"))
+	assert.True(t, got.Checked)
+	assert.True(t, got.LatestUnknown)
+	assert.Zero(t, got.Latest)
+	assert.False(t, got.Available)
+}
+
+// #674 review: a failed answer is kept for the window too, so a gone
+// address is not asked on every page open; a refresh asks again.
+func TestCollectionURLRevision_AFailureIsKeptUntilARefresh(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.importWithValidators(t)
+	p := f.profile(t)
+	p.Collection.Origin.ImportURL = f.server.URL + "/gone.yaml"
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), p))
+	before := f.docRequestCount()
+
+	first := f.urlRevision(t, false)
+	require.Contains(t, first.Error, "404")
+	second := f.urlRevision(t, false)
+	assert.Equal(t, first.Error, second.Error, "the kept failure")
+	assert.False(t, second.Checked)
+
+	p.Collection.Origin.ImportURL = f.server.URL + "/c.yaml"
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), p))
+	assert.True(t, f.urlRevision(t, true).Checked, "a refresh asks again")
+	assert.Equal(t, before+1, f.docRequestCount(), "the 404s were not /c.yaml; the refresh was")
+}
+
+// #674 review: an https address lmm cannot fetch says why, not that it
+// "isn't https".
+func TestCollectionURLRevision_AnAddressWithNoHostSaysWhy(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.importWithValidators(t)
+	p := f.profile(t)
+	p.Collection.Origin.ImportURL = "https:///no-host.lmmc"
+	require.NoError(t, config.SaveProfile(f.svc.ConfigDir(), p))
+
+	got := f.urlRevision(t, false)
+	assert.False(t, got.Checked)
+	assert.Equal(t, core.CollectionUncheckedURL, got.Reason)
+	assert.Contains(t, got.Error, "has no host")
+}
+
+// #674 review: the web UI's export and a duplicate drop the validators,
+// as they drop the address.
+func TestCollectionValidators_LeaveWithTheAddress(t *testing.T) {
+	f := newUpdateFixture(t)
+	f.importWithValidators(t)
+
+	exported, err := f.svc.ExportProfile(context.Background(), "skyrim", "coll")
+	require.NoError(t, err)
+	if exported.Collection != nil && exported.Collection.Origin != nil {
+		assert.Empty(t, exported.Collection.Origin.ETag)
+		assert.Empty(t, exported.Collection.Origin.LastModified)
+		assert.Empty(t, exported.Collection.Origin.ImportURL)
+	}
+
+	_, err = f.svc.DuplicateProfile(context.Background(), "skyrim", "coll", "copy")
+	require.NoError(t, err)
+	dup, err := config.LoadProfile(f.svc.ConfigDir(), "skyrim", "copy")
+	require.NoError(t, err)
+	if dup.Collection != nil && dup.Collection.Origin != nil {
+		assert.Empty(t, dup.Collection.Origin.ETag)
+		assert.Empty(t, dup.Collection.Origin.LastModified)
+		assert.Empty(t, dup.Collection.Origin.ImportURL)
+	}
+}

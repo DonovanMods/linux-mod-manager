@@ -39,8 +39,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   neither) is downloaded in full to check, at most once per five-minute
   cache window. The same cache, `--refresh` / **Check for updates**
   bypass, `lmm update` line and Updates-card line as a NexusMods
-  collection; `collection_revision.origin` is `url`. Only an address that
-  isn't https is still reported as not checkable.
+  collection; `collection_revision.origin` is `url`. The check has its own
+  20-second deadline (the import and the sync keep theirs), and a failed
+  answer is kept for the same window. A document with no version reads as
+  checked with its version unknown (`latest_unknown`), and one older than
+  the installed version as the sync's own refusal. Only an address lmm
+  doesn't fetch (not https, or no host) is still reported as not
+  checkable, saying why.
 
 - **A collection is checked as a collection (#673).** A collection
   profile's update check asks the collection for its latest revision
