@@ -19,10 +19,11 @@ type NexusMods struct {
 	client *Client
 }
 
-// New creates a new NexusMods source
-func New(httpClient *http.Client, apiKey string) *NexusMods {
+// New creates a new NexusMods source. WithDataDir keeps its throttle and
+// quota holds where every lmm process reads them (#675).
+func New(httpClient *http.Client, apiKey string, opts ...Option) *NexusMods {
 	return &NexusMods{
-		client: NewClient(httpClient, apiKey),
+		client: NewClient(httpClient, apiKey, opts...),
 	}
 }
 

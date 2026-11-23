@@ -1,8 +1,7 @@
 // Package httpclient: this file is the in-memory HoldKeeper (#671) - a
 // RetryTransport's holds for a host whose holds need not outlive the
-// process: Steam Workshop's circuit breaker, and NexusMods' throttle and
-// quota holds. Thunderstore keeps its own on disk (thunderstore/hold.go),
-// with the same rules.
+// process: Steam Workshop's circuit breaker. Thunderstore's and NexusMods'
+// are kept on disk, with the same rules, by FileHolds (fileholds.go, #675).
 package httpclient
 
 import (

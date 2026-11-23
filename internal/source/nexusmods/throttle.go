@@ -34,7 +34,11 @@ package nexusmods
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -80,10 +84,36 @@ var retryPolicy = httpclient.RetryPolicy{
 // at construction.
 var retrySleep = httpclient.SleepContext
 
+// holdsFileName is the persisted hold state (#675), in the data dir: a hold
+// one lmm process records is honoured by the next. Its lock is
+// nexusmods-holds.lock, beside it.
+const holdsFileName = "nexusmods-holds.json"
+
+// Option configures a NexusMods source or client.
+type Option func(*options)
+
+type options struct {
+	dataDir string
+}
+
+// WithDataDir keeps the source's throttle and quota holds in dataDir
+// (<dataDir>/nexusmods-holds.json), where every lmm process reads them
+// (#675). Without it they live in memory, for the life of the process.
+func WithDataDir(dataDir string) Option {
+	return func(o *options) { o.dataDir = dataDir }
+}
+
+// holdsPath is where o's holds are kept, or "" for in memory.
+func (o options) holdsPath() string {
+	if o.dataDir == "" {
+		return ""
+	}
+	return filepath.Join(o.dataDir, holdsFileName)
+}
+
 // newRetryingClient returns httpClient with its transport wrapped in the
-// retrying one, and the holds that transport keeps.
-func newRetryingClient(httpClient *http.Client) (*http.Client, *httpclient.RetryTransport, *nexusHolds) {
-	holds := newNexusHolds(nil)
+// retrying one, over holds.
+func newRetryingClient(httpClient *http.Client, holds *nexusHolds) (*http.Client, *httpclient.RetryTransport) {
 	base := httpClient.Transport
 	if base == nil {
 		base = http.DefaultTransport
@@ -91,64 +121,115 @@ func newRetryingClient(httpClient *http.Client) (*http.Client, *httpclient.Retry
 	rt := &httpclient.RetryTransport{Base: base, Policy: retryPolicy, Holds: holds, Sleep: retrySleep}
 	retrying := *httpClient
 	retrying.Transport = rt
-	return &retrying, rt, holds
+	return &retrying, rt
 }
 
-// nexusHolds keeps NexusMods' two kinds of hold apart (#671 review). A
-// throttle Cloudflare named and lmm's own circuit breaker belong to the
-// host - and to the address lmm asks it from - so they stand whatever key
-// is configured. A spent quota belongs to the KEY: a user whose free key
-// ran out and who adds a Premium one must not be refused until the free
-// key's hourly reset, so SetAPIKey clears it (clearQuota).
+// nexusHolds keeps NexusMods' two kinds of hold apart (#671 review), in
+// one store every lmm process shares (#675). A throttle Cloudflare named
+// and lmm's own circuit breaker belong to the host - and to the address
+// lmm asks it from - so they are the store's HOST holds and stand whatever
+// key is configured. A spent quota belongs to the KEY: it is held in the
+// scope of the key's fingerprint (keyFingerprint), so a user whose free key
+// ran out and who adds a Premium one is not refused until the free key's
+// hourly reset, while a second process on the spent key still is.
 type nexusHolds struct {
-	host  *httpclient.MemoryHolds
-	quota *httpclient.MemoryHolds
+	store *httpclient.FileHolds
+	// key is the API key requests are sent with now.
+	key func() string
 }
 
-func newNexusHolds(now func() time.Time) *nexusHolds {
+// quotaScopePattern is the shape of a quota scope: a key's fingerprint.
+var quotaScopePattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+func newNexusHolds(path string, now func() time.Time, key func() string) *nexusHolds {
 	return &nexusHolds{
-		host:  httpclient.NewMemoryHolds(serviceName, now, breakerThreshold, breakerCooldown, maxHold),
-		quota: httpclient.NewMemoryHolds(serviceName, now, 0, breakerCooldown, maxHold),
+		store: httpclient.NewFileHolds(httpclient.FileHoldsConfig{
+			Path:        path,
+			ScopesField: "keys",
+			ValidScope:  quotaScopePattern.MatchString,
+			Now:         now,
+			Threshold:   breakerThreshold,
+			Cooldown:    breakerCooldown,
+			MaxHold:     maxHold,
+			// The data dir's own mode (app.Open): it holds lmm.db too.
+			DirMode: 0o700,
+		}),
+		key: key,
 	}
 }
 
-// Active implements httpclient.HoldKeeper: whichever hold in force ends
-// later.
-func (h *nexusHolds) Active(req *http.Request) (source.Hold, bool) {
-	host, hostHeld := h.host.Active(req)
-	quota, quotaHeld := h.quota.Active(req)
-	if quotaHeld && (!hostHeld || quota.Until.After(host.Until)) {
-		return quota, true
+// keyFingerprint is the scope a key's quota hold is kept under: a
+// domain-separated SHA-256 of the key, cut to 128 bits. It tells one key
+// from another and cannot be turned back into either, so the file never
+// holds the key itself, nor anything a key could be recovered from.
+func keyFingerprint(key string) string {
+	sum := sha256.Sum256([]byte("lmm/nexusmods/quota-hold\x00" + key))
+	return hex.EncodeToString(sum[:16])
+}
+
+// quotaScope is the scope of the key requests are sent with now.
+func (h *nexusHolds) quotaScope() string { return keyFingerprint(h.key()) }
+
+// requestQuotaScope is the scope of the key req was sent with (#675
+// review): a quota a response reports spent is that key's, even when the
+// configured key changed while the request was in flight. A request with
+// no apikey header is the configured key's.
+func (h *nexusHolds) requestQuotaScope(req *http.Request) string {
+	if req != nil {
+		if key := req.Header.Get("apikey"); key != "" {
+			return keyFingerprint(key)
+		}
 	}
-	return host, hostHeld
+	return h.quotaScope()
+}
+
+// asHold is a store record as the hold a refusal or a notice names.
+func asHold(rec httpclient.HoldRecord) source.Hold {
+	return source.Hold{Source: serviceName, Until: rec.Until, Reason: rec.Reason}
+}
+
+// Active implements httpclient.HoldKeeper: the host's hold or the current
+// key's quota hold, whichever in force ends later.
+func (h *nexusHolds) Active(*http.Request) (source.Hold, bool) {
+	rec, _, ok := h.store.Active(h.quotaScope())
+	if !ok {
+		return source.Hold{}, false
+	}
+	return asHold(rec), true
 }
 
 // Named implements httpclient.HoldKeeper: the host's.
 func (h *nexusHolds) Named(req *http.Request, until time.Time, why string) source.Hold {
-	h.host.Named(req, until, why)
+	h.store.Named("", until, why)
 	held, _ := h.Active(req)
 	return held
 }
 
-// Quota implements httpclient.QuotaKeeper: the key's.
+// Quota implements httpclient.QuotaKeeper: the key's that req was sent
+// with.
 func (h *nexusHolds) Quota(req *http.Request, until time.Time, why string) source.Hold {
-	h.quota.Named(req, until, why)
+	h.store.Named(h.requestQuotaScope(req), until, why)
 	held, _ := h.Active(req)
 	return held
 }
 
 // Failed implements httpclient.HoldKeeper: the breaker is the host's.
-func (h *nexusHolds) Failed(req *http.Request, err error) { h.host.Failed(req, err) }
+func (h *nexusHolds) Failed(_ *http.Request, err error) { h.store.Failed("", err.Error()) }
 
 // Succeeded implements httpclient.HoldKeeper.
-func (h *nexusHolds) Succeeded(req *http.Request) { h.host.Succeeded(req) }
+func (h *nexusHolds) Succeeded(*http.Request) { h.store.Succeeded("") }
 
-// clearQuota forgets the spent quota: the key it belonged to is gone.
-func (h *nexusHolds) clearQuota() { h.quota.Clear() }
-
-// list is every hold in force, the host's first.
+// list is every hold in force for this process - the host's first, then
+// the current key's quota. Another key's quota hold holds nothing here.
 func (h *nexusHolds) list() []source.Hold {
-	return append(h.host.Holds(), h.quota.Holds()...)
+	scope := h.quotaScope()
+	var out []source.Hold
+	for _, held := range h.store.List() {
+		if held.Scope == "" || held.Scope == scope {
+			out = append(out, asHold(held.HoldRecord))
+		}
+	}
+	return out
 }
 
 // quotaWhy is the reason a spent quota holds the host for.

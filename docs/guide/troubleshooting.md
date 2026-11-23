@@ -90,6 +90,16 @@ time, and says "Not asking NexusMods again until 14:05:00". If NexusMods
 says the key's hourly and daily allowance are both used up, lmm waits for
 the hourly reset, or until you give it a different key.
 
+A hold outlasts the command that set it. The next `lmm` command, and the
+web UI, keep to it too, and say so before asking anything, so running
+`lmm verify` straight after a throttled `lmm update` doesn't hit the limit
+again. A hold that ends within two minutes is waited out. lmm keeps the
+holds in `nexusmods-holds.json` in its data folder (`~/.local/share/lmm`
+by default; Thunderstore's are in its index folder). Deleting the file
+forgets them, though the site may well still say no. Upgrading the same
+key to Premium doesn't lift an hourly-quota hold, since lmm can't tell the
+key has changed; delete `nexusmods-holds.json` to clear it.
+
 A mod whose check still couldn't get an answer reads "could not check
 version (NexusMods rate limit: try again in 30s)", or "could not check
 version (lmm is not asking NexusMods again until 14:05:00)" while lmm is

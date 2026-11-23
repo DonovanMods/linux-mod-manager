@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **NexusMods holds outlast the command that set them (#675).** When
+  NexusMods (or Cloudflare in front of it) asks lmm to wait, when lmm's
+  own breaker trips, or when a key's hourly and daily quota are both
+  spent, the hold is now written to `nexusmods-holds.json` in the data
+  directory, as Thunderstore's already were. The next `lmm` command, and a
+  running `lmm serve`, honour it: a script running `lmm update` and then
+  `lmm verify` no longer hits the limit again on its first request. A
+  command that starts inside a hold says so before it asks anything ("Not
+  asking NexusMods again until 14:03:00 (in 12m)."), and waits out a hold
+  that ends within two minutes. The quota hold is kept per key, under a
+  one-way fingerprint of the key (never the key itself), so a different
+  key is not held; setting the same key again lifts nothing. A missing,
+  unreadable or damaged file holds nothing, the file is written
+  atomically and readable only by you, and an expired hold is dropped.
+  The store is the one Thunderstore used, moved into the shared HTTP
+  client; Thunderstore's holds behave as before.
+
 - **A collection is checked as a collection (#673).** A collection
   profile's update check asks the collection for its latest revision
   instead of checking the mods it locks one by one (#667 already leaves

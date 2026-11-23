@@ -105,40 +105,44 @@ type gameResponse struct {
 }
 
 // NewClient creates a new NexusMods API client
-func NewClient(httpClient *http.Client, apiKey string) *Client {
+func NewClient(httpClient *http.Client, apiKey string, opts ...Option) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
-	httpClient, retry, holds := newRetryingClient(httpClient)
-
-	return &Client{
-		httpClient: httpClient,
-		retry:      retry,
-		holds:      holds,
-		rest: httpclient.New(httpclient.Options{
-			HTTPClient:  httpClient,
-			BaseURL:     defaultBaseURL,
-			APIKey:      apiKey,
-			AuthHeader:  "apikey",
-			AuthLabel:   "NexusMods",
-			ErrorMapper: mapStatusError,
-		}),
-		apiKey:     apiKey,
-		graphqlURL: defaultGraphQLURL,
+	var o options
+	for _, opt := range opts {
+		opt(&o)
 	}
+	c := &Client{}
+	c.holds = newNexusHolds(o.holdsPath(), nil, c.key)
+	httpClient, c.retry = newRetryingClient(httpClient, c.holds)
+
+	c.httpClient = httpClient
+	c.rest = httpclient.New(httpclient.Options{
+		HTTPClient:  httpClient,
+		BaseURL:     defaultBaseURL,
+		APIKey:      apiKey,
+		AuthHeader:  "apikey",
+		AuthLabel:   "NexusMods",
+		ErrorMapper: mapStatusError,
+	})
+	c.apiKey = apiKey
+	c.graphqlURL = defaultGraphQLURL
+	return c
 }
 
 // SetAPIKey sets the API key for authentication
 //
-// A quota hold the old key earned is lifted (#671 review): the quota is the
-// key's, and a new key has its own. A throttle or breaker hold stands - it
-// is the host's.
+// A quota hold the old key earned no longer holds this client (#671
+// review): the quota is the key's, kept under the key's fingerprint
+// (#675), and a new key has its own. A throttle or breaker hold stands -
+// it is the host's. Setting the same key again lifts nothing: its quota is
+// still spent.
 func (c *Client) SetAPIKey(key string) {
 	c.keyMu.Lock()
 	defer c.keyMu.Unlock()
 	c.apiKey = key
 	c.rest.SetAPIKey(key)
-	c.holds.clearQuota()
 }
 
 // key returns the configured API key.

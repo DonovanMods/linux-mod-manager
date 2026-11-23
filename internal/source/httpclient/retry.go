@@ -20,8 +20,8 @@
 //
 // What differs between the hosts is data, not code: the policy's numbers,
 // how a refusal or an exhausted request is worded (the sentinel each
-// source's callers test for), and where a hold is kept (in memory, or
-// Thunderstore's file shared by every lmm process).
+// source's callers test for), and where a hold is kept (in memory, or a
+// file every lmm process shares: FileHolds).
 package httpclient
 
 import (
