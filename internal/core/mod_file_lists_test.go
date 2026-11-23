@@ -40,6 +40,8 @@ type listingSource struct {
 	urlErr error
 	// hold, when set, keeps UnchangedSince from answering until closed.
 	hold chan struct{}
+	// fetchedIDs is the mod of every file-list fetch, in order.
+	fetchedIDs []string
 }
 
 func (s *listingSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
@@ -62,10 +64,11 @@ func newListingSource(t *testing.T) *listingSource {
 	return s
 }
 
-func (s *listingSource) GetModFiles(_ context.Context, _ *domain.Mod) ([]domain.DownloadableFile, error) {
+func (s *listingSource) GetModFiles(_ context.Context, mod *domain.Mod) ([]domain.DownloadableFile, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fetches++
+	s.fetchedIDs = append(s.fetchedIDs, mod.ID)
 	if s.notFound {
 		return nil, domain.ErrModNotFound
 	}
@@ -329,7 +332,7 @@ func TestDeploy_AThrottledDownloadKeepsTheStoredList(t *testing.T) {
 	assert.Equal(t, 1, src.fetchCount(), "and the stored list is still there")
 }
 
-// TestPlanInstall_AskTheSourceForTheCurrentList (#676 review): an install
+// TestPlanInstall_AsksTheSourceForTheCurrentList (#676 review): an install
 // the user asks for picks the mod's current file, so its plan never takes
 // a stored list - one inside the change signal's lag would offer the file
 // before the latest.
@@ -512,4 +515,35 @@ func TestGetModFiles_ACancelledCallerDoesNotWaitOutAnotherCallersVouch(t *testin
 	start := time.Now()
 	_, _ = svc.GetModFiles(ctx, game, "lsrc", listMod())
 	assert.Less(t, time.Since(start), 2*time.Second, "the cancelled read did not wait for the held answer")
+}
+
+// TestApplyInstall_ADependencyPicksItsCurrentFile (#676 re-review): an
+// install the user asked for installs its dependencies' current files too,
+// so a dependency's list is the source's own - never a stored one inside
+// the change signal's lag - just as the primary's plan is.
+func TestApplyInstall_ADependencyPicksItsCurrentFile(t *testing.T) {
+	svc, game, src := newListingService(t)
+	ctx := context.Background()
+	src.AddMod("g1", &domain.Mod{ID: "1", SourceID: "lsrc", Name: "Listed Mod", Version: "1.0", GameID: "g1",
+		Dependencies: []domain.ModReference{{SourceID: "lsrc", ModID: "2"}}})
+	src.AddMod("g1", &domain.Mod{ID: "2", SourceID: "lsrc", Name: "Needed Mod", Version: "1.0", GameID: "g1"})
+	src.AddDownload("1", zipBytes(t, map[string]string{"plugin.esp": "payload"}))
+	_, err := svc.NewProfileManager().Create(ctx, "g1", "default")
+	require.NoError(t, err)
+	_, err = svc.GetModFiles(ctx, game, "lsrc", &domain.Mod{ID: "2", SourceID: "lsrc", GameID: "g1"})
+	require.NoError(t, err)
+	ageStoredLists(t, svc)
+
+	plan, err := svc.PlanInstall(ctx, game, "default", "lsrc", "1", false)
+	require.NoError(t, err)
+	require.Len(t, plan.Dependencies, 1)
+	src.mu.Lock()
+	src.fetchedIDs = nil
+	src.mu.Unlock()
+	_, err = svc.ApplyInstall(ctx, game, plan, core.InstallOptions{}, nil)
+	require.NoError(t, err)
+
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	assert.Contains(t, src.fetchedIDs, "2", "the dependency's list was fetched, not taken from the store")
 }

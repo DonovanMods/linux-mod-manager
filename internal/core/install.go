@@ -2058,7 +2058,16 @@ func (s *Service) acquireBatchMod(ctx context.Context, game *domain.Game, plan *
 			selected[i] = &overrideFiles[i]
 		}
 	} else {
-		files, err := s.GetModFiles(ctx, game, mod.SourceID, mod)
+		listCtx := ctx
+		if t.dependency {
+			// #676 re-review: an install the user asked for installs its
+			// dependencies' current files, as PlanInstall picks the
+			// primary's - never from a stored list inside the change
+			// signal's lag. The primary's own list was fetched fresh by its
+			// plan a moment ago.
+			listCtx = withFreshFileLists(ctx)
+		}
+		files, err := s.GetModFiles(listCtx, game, mod.SourceID, mod)
 		if err != nil {
 			return nil, skip("Error", fmt.Sprintf("failed to get mod files: %v", err), err)
 		}
