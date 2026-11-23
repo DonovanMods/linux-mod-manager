@@ -1015,7 +1015,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			scope.ModName = mod.Name
 			failed.Name = mod.Name
 
-			files, err := s.GetModFiles(ctx, game, ref.SourceID, mod)
+			files, stored, err := s.modFilesFrom(ctx, game, ref.SourceID, mod, ref.FileIDs) // #676
 			if err != nil {
 				fail(fmt.Sprintf("failed to get files: %v", err))
 				continue
@@ -1027,7 +1027,9 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 			// #662: stored ids whose main files mix versions heal to one
 			// (a collection's are installed as they are), as the plan said.
-			sel, err := selectStoredFiles(files, ref.FileIDs, ref.Version, ref.FromCollection, mod.Version)
+			_, sel, err := reselectFresh(ctx, s, game, ref.SourceID, mod, ref.FileIDs, files, stored, func(fs []domain.DownloadableFile) (storedSelection, error) {
+				return selectStoredFiles(fs, ref.FileIDs, ref.Version, ref.FromCollection, mod.Version)
+			}) // #676 review
 			if err != nil {
 				fail(err.Error())
 				continue

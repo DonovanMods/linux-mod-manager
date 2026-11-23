@@ -47,7 +47,7 @@ func TestMigrateV28_WidensTheRootCheck(t *testing.T) {
 	require.NoError(t, d.migrate(ctx))
 	var version int
 	require.NoError(t, d.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version))
-	assert.Equal(t, 29, version)
+	assert.Equal(t, 30, version)
 
 	recs, err := d.DeployedFileRecordsForMod(ctx, "g", "default", "src", "m")
 	require.NoError(t, err)

@@ -1113,7 +1113,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 		return skip(fmt.Sprintf("failed to fetch: %v", err))
 	}
 
-	files, err := s.GetModFiles(ctx, game, mod.SourceID, fetchedMod)
+	files, stored, err := s.modFilesFrom(ctx, game, mod.SourceID, fetchedMod, mod.FileIDs) // #676
 	if err != nil || len(files) == 0 {
 		return skip("no files available")
 	}
@@ -1125,7 +1125,11 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	if ref := s.recordedRef(ctx, game.ID, mod.ProfileName, mod.SourceID, mod.ID); ref != nil {
 		fromCollection = ref.FromCollection
 	}
-	sel, err := selectStoredFiles(files, mod.FileIDs, mod.Version, fromCollection, mod.Version)
+	// #676 review: a version a stored list lacks is looked for once in the
+	// source's own.
+	_, sel, err := reselectFresh(ctx, s, game, mod.SourceID, fetchedMod, mod.FileIDs, files, stored, func(fs []domain.DownloadableFile) (storedSelection, error) {
+		return selectStoredFiles(fs, mod.FileIDs, mod.Version, fromCollection, mod.Version)
+	})
 	if err != nil {
 		return skip(err.Error())
 	}

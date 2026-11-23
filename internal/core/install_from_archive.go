@@ -81,7 +81,7 @@ func (s *Service) identifyInstallArchive(ctx context.Context, game *domain.Game,
 
 	var matched *domain.DownloadableFile
 	if srcMod != nil {
-		files, err := s.GetModFiles(ctx, game, opts.SourceID, srcMod)
+		files, err := s.GetModFiles(withFreshFileLists(ctx), game, opts.SourceID, srcMod) // #676: matched against a file in hand - the source's own list
 		if err != nil {
 			warn("could not fetch %s's files from %s: %v", plan.Mod.Name, opts.SourceID, err)
 		} else {

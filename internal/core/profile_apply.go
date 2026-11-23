@@ -630,7 +630,7 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 		return
 	}
 
-	files, err := s.GetModFiles(ctx, game, entry.Ref.SourceID, mod)
+	files, stored, err := s.modFilesFrom(ctx, game, entry.Ref.SourceID, mod, entry.Ref.FileIDs) // #676
 	if err != nil {
 		entry.Error = fmt.Sprintf("failed to get files: %v", err)
 		return
@@ -645,7 +645,9 @@ func (s *Service) resolveProfileApplyInstall(ctx context.Context, game *domain.G
 	// own (empty for an unpinned ref, which selectFilesForVersion then
 	// resolves by version/primary). #662: stored ids whose main files mix
 	// versions heal to one (a collection's are installed as they are).
-	sel, err := selectStoredFiles(files, entry.Ref.FileIDs, entry.Ref.Version, entry.Ref.FromCollection, mod.Version)
+	_, sel, err := reselectFresh(ctx, s, game, entry.Ref.SourceID, mod, entry.Ref.FileIDs, files, stored, func(fs []domain.DownloadableFile) (storedSelection, error) {
+		return selectStoredFiles(fs, entry.Ref.FileIDs, entry.Ref.Version, entry.Ref.FromCollection, mod.Version)
+	}) // #676 review
 	if err != nil {
 		entry.Error = err.Error()
 		return

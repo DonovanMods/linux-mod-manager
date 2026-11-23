@@ -1037,7 +1037,9 @@ func (s *Service) applyUpdate(ctx context.Context, game *domain.Game, plan *Upda
 	// stated type is the mod's, not the version's.
 	newMod.ModType = mod.ModType
 
-	files, err := s.GetModFiles(ctx, game, mod.SourceID, newMod)
+	// #676: an update is the moment the mod changed, and its new version's
+	// files must be the source's own - never a stored list from before.
+	files, err := s.GetModFiles(withFreshFileLists(ctx), game, mod.SourceID, newMod)
 	if err != nil {
 		return result, fmt.Errorf("getting mod files: %w", err)
 	}

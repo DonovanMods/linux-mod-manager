@@ -130,6 +130,7 @@ func (d *DB) migrations() []func(context.Context, migrationExec) error {
 		migrateV27,
 		migrateV28,
 		migrateV29,
+		migrateV30,
 	}
 }
 
@@ -864,6 +865,34 @@ func migrateV29(ctx context.Context, d migrationExec) error {
 			FOREIGN KEY (source_id, mod_id, game_id, profile_name)
 				REFERENCES installed_mods(source_id, mod_id, game_id, profile_name)
 				ON DELETE CASCADE ON UPDATE CASCADE
+		)
+	`)
+	return err
+}
+
+// migrateV30 adds mod_file_lists (#676): the last file list each source
+// gave for a mod - per source, game and mod, not per profile, since the
+// list is the source's - as the JSON of []domain.DownloadableFile, with
+// the time it was fetched and the time the source last vouched it
+// unchanged (checked_at, moved forward by a source.ChangeTracker). Any
+// flow that asks core for a mod's files is answered from it while the
+// source vouches for it (core/mod_file_lists.go).
+//
+// A cache: a missing, unreadable or unvouched list only costs a fetch.
+// format is the version of the JSON's shape; a core that writes another
+// ignores every older row. Bounded by PruneModFileLists, not by a foreign
+// key: an install plan lists a mod no profile has yet.
+func migrateV30(ctx context.Context, d migrationExec) error {
+	_, err := d.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS mod_file_lists (
+			source_id TEXT NOT NULL,
+			game_id TEXT NOT NULL,
+			mod_id TEXT NOT NULL,
+			files TEXT NOT NULL,
+			fetched_at DATETIME NOT NULL,
+			checked_at DATETIME NOT NULL,
+			format INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY (source_id, game_id, mod_id)
 		)
 	`)
 	return err

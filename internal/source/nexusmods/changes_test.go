@@ -7,6 +7,7 @@ package nexusmods
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -183,3 +184,25 @@ func TestCheckUpdates_ReportsEachModItFinished(t *testing.T) {
 }
 
 var _ source.ChangeTracker = (*NexusMods)(nil)
+
+// TestGetDownloadURL_AGoneFileIsErrFileGone (#676 review): a download link
+// NexusMods answers 404 for is a file it no longer offers - which a stale
+// file list explains, so core refetches the list - while any other refusal
+// is not.
+func TestGetDownloadURL_AGoneFileIsErrFileGone(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		gone   bool
+	}{{http.StatusNotFound, true}, {http.StatusGone, true}, {http.StatusBadRequest, false}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(`{"message":"no"}`))
+		}))
+		nm := New(srv.Client(), "key")
+		nm.client.SetBaseURL(srv.URL)
+		_, err := nm.GetDownloadURL(context.Background(), &domain.Mod{ID: "1", GameID: "skyrim"}, "7")
+		require.Error(t, err)
+		assert.Equal(t, tc.gone, errors.Is(err, source.ErrFileGone), "HTTP %d: %v", tc.status, err)
+		srv.Close()
+	}
+}

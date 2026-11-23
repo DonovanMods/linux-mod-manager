@@ -745,6 +745,10 @@ func (c *Client) GetDownloadLinks(ctx context.Context, gameDomain string, modID,
 			c.forgetTier()
 			return nil, &source.AccountRestrictedError{Reason: premiumOnlyReason}
 		}
+		if isStatus(err, http.StatusNotFound) || isStatus(err, http.StatusGone) {
+			// #676: the file is gone, which a stale file list explains.
+			return nil, fmt.Errorf("getting download links: file %d: %w: %w", fileID, source.ErrFileGone, err)
+		}
 		return nil, fmt.Errorf("getting download links: %w", err)
 	}
 

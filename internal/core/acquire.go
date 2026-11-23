@@ -187,7 +187,43 @@ func (a *acquiredFile) claimTree() error {
 	return nil
 }
 
-func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, sink EventSink) (a *acquiredFile, err error) {
+// #676: a download that finds its file gone (fileGone) may have been sent
+// by a stored file list the source has moved past. The list is fetched
+// again once: if the source still offers the very file, its download is
+// tried once more, from the fresh entry; if it does not, the stored list
+// is replaced and the download fails as it would have. The file is never
+// swapped for another - a caller records the ID it chose, and a pinned
+// flow's own heal is what decides on a replacement. A throttle, an
+// account refusal or a network failure is not a gone file, and keeps the
+// stored list.
+func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, sink EventSink) (*acquiredFile, error) {
+	a, err := s.acquireFileOnce(ctx, gameCache, sourceID, game, mod, file, fx, sink)
+	if err == nil || !fileGone(err) || freshFileLists(ctx) || !s.storesFileLists(sourceID, game) {
+		return a, err
+	}
+	fresh := withFreshFileLists(ctx)
+	files, ferr := s.modFilesWanting(fresh, game, sourceID, SourceMappedMod(gameOrEmpty(game), mod), []string{file.ID})
+	if ferr != nil {
+		return nil, err
+	}
+	for i := range files {
+		if files[i].ID == file.ID {
+			return s.acquireFileOnce(fresh, gameCache, sourceID, game, mod, &files[i], fx, sink)
+		}
+	}
+	return nil, err
+}
+
+// gameOrEmpty is game, or an empty game for SourceMappedMod's mapping.
+func gameOrEmpty(game *domain.Game) *domain.Game {
+	if game == nil {
+		return &domain.Game{}
+	}
+	return game
+}
+
+// acquireFileOnce is one attempt at acquireFileRaw's download.
+func (s *Service) acquireFileOnce(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, sink EventSink) (a *acquiredFile, err error) {
 	// Note: We intentionally do NOT check if cache exists here.
 	// A mod can have multiple downloadable files (e.g., main mod + optional patches),
 	// and each file should be downloaded and extracted to the cache.

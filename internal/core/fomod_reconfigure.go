@@ -122,7 +122,7 @@ func (s *Service) PlanFomodReconfigure(ctx context.Context, game *domain.Game, p
 	// The files and version installed, not the source's latest: a
 	// reconfigure changes the choices and nothing else.
 	if len(row.FileIDs) > 0 {
-		pool, err := s.resolveInstallCandidatePool(ctx, game, sourceID, &install.Mod, true, "")
+		pool, err := s.resolveInstallCandidatePool(ctx, game, sourceID, &install.Mod, true, "", row.FileIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -135,7 +135,7 @@ func (s *Service) PlanFomodReconfigure(ctx context.Context, game *domain.Game, p
 		// No file ids recorded, and the source's default pick is another
 		// version: ask the source for the installed version's files rather
 		// than install the latest under the installed version's label.
-		pool, err := s.resolveInstallCandidatePool(ctx, game, sourceID, &install.Mod, true, row.Version)
+		pool, err := s.resolveInstallCandidatePool(ctx, game, sourceID, &install.Mod, true, row.Version, row.FileIDs)
 		if err != nil {
 			return nil, fmt.Errorf("%s: lmm did not record which files of version %s are installed, and %s cannot select them by version (%w); reinstall it with lmm install --version %s, or update it, to run its installer", row.Name, row.Version, sourceID, err, row.Version)
 		}
