@@ -201,6 +201,10 @@ func TestVerify_AnAlreadyConfirmedModIsNotAskedAgain(t *testing.T) {
 
 	src.reset()
 	src.changed["upd"] = true
+	// The change comes later than the file lists verify fetched (#676
+	// reuses a list fetched within the minute, a change the source's own
+	// signal could not show yet): age them, as time would.
+	ageStoredLists(t, svc)
 	third, err := svc.VerifyForTest(ctx, game, "default", full, nil)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"upd"}, src.listed, "a mod that changed is checked again")
