@@ -221,7 +221,7 @@ func headerOf(m map[string]string) http.Header {
 // setRetryClock puts the client's retries, and the holds they keep, on the
 // given clock and sleep.
 func (c *Client) setRetryClock(now func() time.Time, sleep func(context.Context, time.Duration) error) {
-	c.holds = newNexusHolds(now)
+	c.holds = newNexusHolds(c.holds.store.Path(), now, c.key)
 	c.retry.Holds = c.holds
 	c.retry.Now = now
 	c.retry.Sleep = sleep

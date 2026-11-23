@@ -29,12 +29,13 @@ const icarusFirestoreProjectID = "projectdaedalus-fb09f"
 // sources share one key pipeline.
 //
 // Each factory is handed the resolved Paths: steamworkshop (#269) needs the
-// cache root for its metadata cache (<CacheDir>/_steamworkshop/meta/) and
+// cache root for its metadata cache (<CacheDir>/_steamworkshop/meta/),
 // thunderstore (#360) for its community index
-// (<CacheDir>/_thunderstore/<community>/) - the two built-ins that need
-// anything from the environment beyond a key.
+// (<CacheDir>/_thunderstore/<community>/), and nexusmods (#675) the data
+// dir for its throttle and quota holds (<DataDir>/nexusmods-holds.json) -
+// the three built-ins that need anything from the environment beyond a key.
 var builtinSourceFactories = []func(Paths) source.ModSource{
-	func(Paths) source.ModSource { return nexusmods.New(nil, "") },
+	func(p Paths) source.ModSource { return nexusmods.New(nil, "", nexusmods.WithDataDir(p.DataDir)) },
 	func(Paths) source.ModSource { return curseforge.New(nil, "") },
 	func(Paths) source.ModSource { return icarus.New(nil, icarusFirestoreProjectID) },
 	func(p Paths) source.ModSource {
