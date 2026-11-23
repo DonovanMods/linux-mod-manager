@@ -1135,7 +1135,8 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   serves a whole flow.
   - A stale list never picks the wrong file:
     - An install you ask for (`lmm install`, the web UI's Install) always
-      asks the source, so "the latest file" is the latest.
+      asks the source, so "the latest file" is the latest. Its dependencies
+      get their current files the same way (#676).
     - A flow that knows which file IDs it needs (a deploy's or switch's
       recorded files, a collection's pins, an install's `--file`) fetches
       the list again when one is missing.

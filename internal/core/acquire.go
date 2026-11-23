@@ -202,7 +202,8 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		return a, err
 	}
 	fresh := withFreshFileLists(ctx)
-	files, ferr := s.modFilesWanting(fresh, game, sourceID, SourceMappedMod(gameOrEmpty(game), mod), []string{file.ID})
+	// game is non-nil here: storesFileLists requires it.
+	files, ferr := s.modFilesWanting(fresh, game, sourceID, SourceMappedMod(game, mod), []string{file.ID})
 	if ferr != nil {
 		return nil, err
 	}
@@ -212,14 +213,6 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		}
 	}
 	return nil, err
-}
-
-// gameOrEmpty is game, or an empty game for SourceMappedMod's mapping.
-func gameOrEmpty(game *domain.Game) *domain.Game {
-	if game == nil {
-		return &domain.Game{}
-	}
-	return game
 }
 
 // acquireFileOnce is one attempt at acquireFileRaw's download.
