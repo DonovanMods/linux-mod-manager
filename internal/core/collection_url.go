@@ -170,20 +170,13 @@ type collectionFetch struct {
 	validators  collectionValidators
 }
 
-// fetchCollectionDocument GETs u and returns its body: a `.lmmc`
-// container up to maxCollectionContainer, or anything else - a YAML
-// document - up to maxCollectionDocument, decided by the first bytes and
-// enforced as the body arrives. Nothing it returns quotes u's userinfo or
-// query.
-func (s *Service) fetchCollectionDocument(ctx context.Context, u *url.URL) ([]byte, error) {
-	f, err := s.fetchCollection(ctx, u, collectionValidators{})
-	return f.data, err
-}
-
-// fetchCollection is fetchCollectionDocument, also returning the
-// response's validators (#674). With validators to present (cond), the
-// request is conditional (If-None-Match, If-Modified-Since), and a 304
-// answers notModified with no body.
+// fetchCollection GETs u and returns its body: a `.lmmc` container up to
+// maxCollectionContainer, or anything else - a YAML document - up to
+// maxCollectionDocument, decided by the first bytes and enforced as the
+// body arrives. Nothing it returns quotes u's userinfo or query. It also
+// returns the response's validators (#674); with validators to present
+// (cond), the request is conditional (If-None-Match, If-Modified-Since),
+// and a 304 answers notModified with no body.
 func (s *Service) fetchCollection(ctx context.Context, u *url.URL, cond collectionValidators) (collectionFetch, error) {
 	var f collectionFetch
 	ctx, cancel := context.WithTimeout(ctx, collectionFetchTimeout)
