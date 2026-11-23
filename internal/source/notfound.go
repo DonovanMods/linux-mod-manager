@@ -6,6 +6,12 @@ import (
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 )
 
+// ErrFileGone reports that a source no longer offers a file its list did:
+// deleted, or hidden since (#676). A source wraps it in its download
+// refusal, so core can tell a gone file - which a stale list explains - from
+// a throttle or an account refusal, which it does not.
+var ErrFileGone = errors.New("the file is no longer offered")
+
 // ModNotFoundError is how an update check reports ONE installed mod its
 // source's catalog no longer has (#539) - deleted, delisted, or republished
 // under a new ID. It is domain.ErrModNotFound to errors.Is, and names the

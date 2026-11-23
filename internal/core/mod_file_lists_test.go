@@ -9,6 +9,7 @@ package core_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -35,6 +36,20 @@ type listingSource struct {
 	vouches  int
 	changed  bool
 	notFound bool
+	// urlErr, when set, is every download-URL request's answer.
+	urlErr error
+	// hold, when set, keeps UnchangedSince from answering until closed.
+	hold chan struct{}
+}
+
+func (s *listingSource) GetDownloadURL(ctx context.Context, mod *domain.Mod, fileID string) (string, error) {
+	s.mu.Lock()
+	err := s.urlErr
+	s.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
+	return s.mockSourceWithDownloads.GetDownloadURL(ctx, mod, fileID)
 }
 
 func newListingSource(t *testing.T) *listingSource {
@@ -58,6 +73,9 @@ func (s *listingSource) GetModFiles(_ context.Context, _ *domain.Mod) ([]domain.
 }
 
 func (s *listingSource) UnchangedSince(_ context.Context, _ string, since map[string]time.Time) (map[string]time.Time, error) {
+	if s.hold != nil {
+		<-s.hold
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.vouches++
@@ -232,26 +250,159 @@ func TestDeploy_ASecondRedownloadOfAnUnchangedModFetchesNoList(t *testing.T) {
 	assert.Equal(t, int64(2), src.downloads.Load(), "the file itself was downloaded both times")
 }
 
-// TestDeploy_AFileTheHostNoLongerHasDropsTheStoredList: a download that
-// fails as gone (HTTP 404) leaves no stored list behind, so the next
-// attempt asks the source.
-func TestDeploy_AFileTheHostNoLongerHasDropsTheStoredList(t *testing.T) {
-	svc, game, src := newListingService(t)
-	ctx := context.Background()
-	require.NoError(t, svc.SaveInstalledMod(ctx, &domain.InstalledMod{
-		Mod: *listMod(), ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, FileIDs: []string{"1"},
+// seedListedRow installs mod 1 in g1/default with fileIDs and lists it in
+// the profile.
+func seedListedRow(t *testing.T, svc *core.Service, fileIDs ...string) {
+	t.Helper()
+	require.NoError(t, svc.SaveInstalledMod(context.Background(), &domain.InstalledMod{
+		Mod: *listMod(), ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true, FileIDs: fileIDs,
 	}))
 	seedProfileWithMod(t, svc, "g1", "default", "lsrc", "1", "1.0")
+}
 
-	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil) // no payload for file 1: 404
+// TestDeploy_AGoneDownloadRefetchesTheListAndRetriesOnce (#676 review): a
+// download that finds its file gone asks the source for the list once
+// more, within the same deploy; the source still offers the file, so its
+// download is tried again - and succeeds.
+func TestDeploy_AGoneDownloadRefetchesTheListAndRetriesOnce(t *testing.T) {
+	svc, game, src := newListingService(t)
+	ctx := context.Background()
+	seedListedRow(t, svc, "1")
+	_, err := svc.GetModFiles(ctx, game, "lsrc", listMod())
+	require.NoError(t, err)
+	ageStoredLists(t, svc)
+	payload := zipBytes(t, map[string]string{"plugin.esp": "payload"})
+	src.onDownload = func() { src.AddDownload("1", payload) } // the first answer is a 404
+
+	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Deployed, "%+v", result.Skipped)
+	assert.Equal(t, 2, src.fetchCount(), "the list was fetched once more, within the deploy")
+	assert.Equal(t, int64(2), src.downloads.Load(), "and the download tried once more")
+}
+
+// TestDeploy_AGoneFileTheSourceNoLongerOffersFailsWithTheFreshList: the
+// fresh list no longer offers the file, so the download is not retried; the
+// deploy fails as it would have, and the stored list is the fresh one.
+func TestDeploy_AGoneFileTheSourceNoLongerOffersFailsWithTheFreshList(t *testing.T) {
+	svc, game, src := newListingService(t)
+	ctx := context.Background()
+	seedListedRow(t, svc, "1")
+	_, err := svc.GetModFiles(ctx, game, "lsrc", listMod())
+	require.NoError(t, err)
+	ageStoredLists(t, svc)
+	src.mu.Lock()
+	src.files = []domain.DownloadableFile{{ID: "9", FileName: "other.zip", Version: "1.0", IsPrimary: true, Category: "MAIN"}}
+	src.mu.Unlock()
+	src.urlErr = fmt.Errorf("getting download links: %w", source.ErrFileGone)
+
+	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Skipped, 1)
-	assert.Contains(t, result.Skipped[0].Reason, "404")
+	assert.Equal(t, 2, src.fetchCount())
+	ageStoredLists(t, svc)
+	files, err := svc.GetModFiles(ctx, game, "lsrc", listMod())
+	require.NoError(t, err)
+	assert.Equal(t, "9", files[0].ID, "the stored list is the source's current one")
+	assert.Equal(t, 2, src.fetchCount())
+}
 
+// TestDeploy_AThrottledDownloadKeepsTheStoredList (#676 review): a download
+// refused for a throttle says nothing about the list - dropping it would
+// only send the throttled host more requests.
+func TestDeploy_AThrottledDownloadKeepsTheStoredList(t *testing.T) {
+	svc, game, src := newListingService(t)
+	ctx := context.Background()
+	seedListedRow(t, svc, "1")
+	_, err := svc.GetModFiles(ctx, game, "lsrc", listMod())
+	require.NoError(t, err)
+	ageStoredLists(t, svc)
+	src.urlErr = &source.RetryLaterError{Source: "Mock", Until: time.Now().Add(time.Minute), Reason: "rate limited"}
+
+	result, err := svc.DeployProfile(ctx, game, "default", core.DeployOptions{}, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Skipped, 1)
+	assert.Equal(t, 1, src.fetchCount(), "no list fetched for a throttle")
 	ageStoredLists(t, svc)
 	_, err = svc.GetModFiles(ctx, game, "lsrc", listMod())
 	require.NoError(t, err)
-	assert.Equal(t, 2, src.fetchCount(), "the list that offered the gone file was dropped")
+	assert.Equal(t, 1, src.fetchCount(), "and the stored list is still there")
+}
+
+// TestPlanInstall_AskTheSourceForTheCurrentList (#676 review): an install
+// the user asks for picks the mod's current file, so its plan never takes
+// a stored list - one inside the change signal's lag would offer the file
+// before the latest.
+func TestPlanInstall_AsksTheSourceForTheCurrentList(t *testing.T) {
+	svc, game, src := newListingService(t)
+	ctx := context.Background()
+	_, err := svc.GetModFiles(ctx, game, "lsrc", listMod())
+	require.NoError(t, err)
+	ageStoredLists(t, svc)
+	_, err = svc.NewProfileManager().Create(ctx, "g1", "default")
+	require.NoError(t, err)
+
+	_, err = svc.PlanInstall(ctx, game, "default", "lsrc", "1", false)
+	require.NoError(t, err)
+	assert.Equal(t, 2, src.fetchCount(), "the plan fetched the list")
+}
+
+// TestProfileApply_AVersionAStoredListLacksIsLookedForFresh (#676 review): a
+// profile entry with a version and no file IDs, at a version uploaded
+// inside the change signal's lag: the stored list does not have it, so the
+// apply looks once in the source's own list rather than refusing.
+func TestProfileApply_AVersionAStoredListLacksIsLookedForFresh(t *testing.T) {
+	svc, game, src := newListingService(t)
+	ctx := context.Background()
+	_, err := svc.GetModFiles(ctx, game, "lsrc", listMod())
+	require.NoError(t, err)
+	ageStoredLists(t, svc)
+	src.mu.Lock()
+	src.files = append(src.files, domain.DownloadableFile{ID: "2", FileName: "mod-2.zip", Version: "2.0", IsPrimary: true, Category: "MAIN"})
+	src.mu.Unlock()
+	src.AddDownload("2", zipBytes(t, map[string]string{"plugin.esp": "two"}))
+	seedProfileWithMod(t, svc, "g1", "default", "lsrc", "1", "2.0")
+
+	plan, err := svc.PlanProfileApply(ctx, game, "default")
+	require.NoError(t, err)
+	_, err = svc.ApplyProfileApply(ctx, game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	installed, err := svc.GetInstalledMods(ctx, "g1", "default")
+	require.NoError(t, err)
+	require.Len(t, installed, 1)
+	assert.Equal(t, []string{"2"}, installed[0].FileIDs, "version 2.0's file, from the fresh list")
+}
+
+// TestSwitch_ASecondSwitchOfAnUnchangedModFetchesNoList: switching to a
+// profile that has to download an unchanged mod twice over - its cache
+// entry lost in between - asks for the mod's file list once.
+func TestSwitch_ASecondSwitchOfAnUnchangedModFetchesNoList(t *testing.T) {
+	svc, game, src := newListingService(t)
+	ctx := context.Background()
+	src.AddDownload("1", zipBytes(t, map[string]string{"plugin.esp": "payload"}))
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(ctx, "g1", "default")
+	require.NoError(t, err)
+	_, err = pm.Create(ctx, "g1", "other")
+	require.NoError(t, err)
+	require.NoError(t, pm.UpsertMod(ctx, "g1", "other", domain.ModReference{SourceID: "lsrc", ModID: "1", Version: "1.0", FileIDs: []string{"1"}}))
+
+	switchTo := func(target string) {
+		t.Helper()
+		plan, err := svc.PlanProfileSwitch(ctx, game, target)
+		require.NoError(t, err)
+		_, err = svc.ApplyProfileSwitch(ctx, game, plan, nil)
+		require.NoError(t, err)
+	}
+	switchTo("other")
+	require.Equal(t, 1, src.fetchCount())
+	switchTo("default")
+	ageStoredLists(t, svc)
+	require.NoError(t, svc.GetGameCache(game).Delete(cache.Key{GameID: "g1", SourceID: "lsrc", ModID: "1", Version: "1.0"}))
+	switchTo("other")
+
+	assert.Equal(t, int64(2), src.downloads.Load(), "the second switch downloaded the file again")
+	assert.Equal(t, 1, src.fetchCount(), "but not its list")
 }
 
 // TestVerify_RefreshBypassesTheStoredList: an explicit re-verify asks the
@@ -340,4 +491,25 @@ func TestGetModFiles_ConcurrentReadsShareOneAnswer(t *testing.T) {
 	src.mu.Lock()
 	defer src.mu.Unlock()
 	assert.Equal(t, 1, src.vouches, "one change-signal answer for all of them")
+}
+
+// TestGetModFiles_ACancelledCallerDoesNotWaitOutAnotherCallersVouch (#676
+// review): a read waiting for another caller's change-signal request gives
+// up with its own context - a closed browser tab is not held behind it.
+func TestGetModFiles_ACancelledCallerDoesNotWaitOutAnotherCallersVouch(t *testing.T) {
+	svc, game, src := newListingService(t)
+	_, err := svc.GetModFiles(context.Background(), game, "lsrc", listMod())
+	require.NoError(t, err)
+	ageStoredLists(t, svc)
+	src.hold = make(chan struct{})
+	defer close(src.hold)
+
+	go func() { _, _ = svc.GetModFiles(context.Background(), game, "lsrc", listMod()) }() // holds the turn
+	time.Sleep(50 * time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, _ = svc.GetModFiles(ctx, game, "lsrc", listMod())
+	assert.Less(t, time.Since(start), 2*time.Second, "the cancelled read did not wait for the held answer")
 }

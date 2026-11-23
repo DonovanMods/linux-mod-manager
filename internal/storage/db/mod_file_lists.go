@@ -83,17 +83,26 @@ func (d *DB) queryModFileLists(ctx context.Context, where string, args ...any) (
 }
 
 // TouchModFileLists moves each of sourceID's gameID lists (by mod ID) to
-// the time its source vouched it unchanged up to, never back.
+// the time its source vouched it unchanged up to, never back - in one
+// transaction, so a game's hundreds of lists are one write.
 func (d *DB) TouchModFileLists(ctx context.Context, sourceID, gameID string, at map[string]time.Time) error {
+	if len(at) == 0 {
+		return nil
+	}
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("touching stored file lists: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	for modID, t := range at {
-		if _, err := d.ExecContext(ctx, `
+		if _, err := tx.ExecContext(ctx, `
 			UPDATE mod_file_lists SET checked_at = ?
 			WHERE source_id = ? AND game_id = ? AND mod_id = ? AND checked_at < ?`,
 			formatTime(t), sourceID, gameID, modID, formatTime(t)); err != nil {
 			return fmt.Errorf("touching %s's file list: %w", domain.ModKey(sourceID, modID), err)
 		}
 	}
-	return nil
+	return tx.Commit()
 }
 
 // ForgetModFileList drops one mod's list. Forgetting what is not recorded

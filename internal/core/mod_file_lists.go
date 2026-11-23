@@ -29,7 +29,9 @@
 // The store is a cache: a missing, unreadable or unvouched list only costs
 // a fetch. It is bounded: PruneModFileLists, at most every
 // fileListPruneEvery, drops lists for mods no profile has, lists no source
-// would vouch for any more, and the oldest past fileListLimit.
+// would vouch for any more, and the oldest past fileListLimit - 5,000 rows,
+// each a mod's whole list as the source gave it, descriptions included, so
+// a few megabytes at the outside.
 package core
 
 import (
@@ -82,8 +84,12 @@ type fileListState struct {
 
 // fileListVouch is one change-signal answer: the stored lists it was asked
 // about, those it vouched for (and up to when), and when it was asked.
+// turn is a one-slot semaphore: whoever holds it asks the source, and the
+// rest wait for that answer - or give up with their own context (#676
+// review), so a closed browser tab is never held behind another caller's
+// request.
 type fileListVouch struct {
-	mu      sync.Mutex
+	turn    chan struct{}
 	askedAt time.Time
 	asked   map[string]bool
 	vouched map[string]time.Time
@@ -109,15 +115,23 @@ func freshFileLists(ctx context.Context) bool {
 // needs: a stored list that lacks any of want is not answered, and the
 // list is fetched once more. want may be empty.
 func (s *Service) modFilesWanting(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod, want []string) ([]domain.DownloadableFile, error) {
+	files, _, err := s.modFilesFrom(ctx, game, sourceID, mod, want)
+	return files, err
+}
+
+// modFilesFrom is modFilesWanting, also reporting whether the answer came
+// from the store - the one case a caller's failed selection is worth
+// asking the source again for (reselectFresh).
+func (s *Service) modFilesFrom(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod, want []string) ([]domain.DownloadableFile, bool, error) {
 	src, err := s.sourceByID(sourceID)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	tracker, tracked := src.(source.ChangeTracker)
 	storable := tracked && game != nil && s.db != nil && mod != nil && mod.ID != ""
 	if storable && !freshFileLists(ctx) {
 		if files, ok := s.storedModFiles(ctx, tracker, game, sourceID, mod.ID, want); ok {
-			return sanitizeSourceFiles(files), nil
+			return sanitizeSourceFiles(files), true, nil
 		}
 	}
 
@@ -131,7 +145,26 @@ func (s *Service) modFilesWanting(ctx context.Context, game *domain.Game, source
 			s.storeModFiles(ctx, game, sourceID, mod.ID, files, fetchedAt)
 		}
 	}
-	return sanitizeSourceFiles(files), err // #594
+	return sanitizeSourceFiles(files), false, err // #594
+}
+
+// reselectFresh runs pick over files and, when it fails because a version
+// is not there (ErrVersionNotFound, ErrStoredFilesUnavailable) and files
+// came from the store, asks the source once for its own list and picks
+// again (#676 review): a version uploaded inside the change signal's lag
+// is not a refusal. It returns the files the pick was made from. A list
+// that was already the source's own is not asked for again.
+func reselectFresh[T any](ctx context.Context, s *Service, game *domain.Game, sourceID string, mod *domain.Mod, want []string, files []domain.DownloadableFile, stored bool, pick func([]domain.DownloadableFile) (T, error)) ([]domain.DownloadableFile, T, error) {
+	picked, err := pick(files)
+	if err == nil || !stored || !(errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrStoredFilesUnavailable)) {
+		return files, picked, err
+	}
+	fresh, ferr := s.modFilesWanting(withFreshFileLists(ctx), game, sourceID, mod, want)
+	if ferr != nil {
+		return files, picked, err // the stored answer's own refusal stands
+	}
+	picked, err = pick(fresh)
+	return fresh, picked, err
 }
 
 // storedModFiles answers from the store: the stored list, when it holds
@@ -170,15 +203,19 @@ func (s *Service) vouchedFileLists(ctx context.Context, tracker source.ChangeTra
 	}
 	v := s.fileLists.vouches[key]
 	if v == nil {
-		v = &fileListVouch{}
+		v = &fileListVouch{turn: make(chan struct{}, 1)}
 		s.fileLists.vouches[key] = v
 	}
 	s.fileLists.mu.Unlock()
 
 	// Held across the source's answer: a switch's concurrent reads of one
 	// game wait for the one request rather than each sending their own.
-	v.mu.Lock()
-	defer v.mu.Unlock()
+	select {
+	case v.turn <- struct{}{}:
+	case <-ctx.Done():
+		return nil
+	}
+	defer func() { <-v.turn }()
 	if v.asked[modID] && time.Since(v.askedAt) < fileListVouchReuse {
 		return v.vouched
 	}
@@ -238,9 +275,14 @@ func (s *Service) forgetModFiles(ctx context.Context, game *domain.Game, sourceI
 	_ = s.db.ForgetModFileList(ctx, sourceID, game.ID, modID)
 }
 
-// fileGone reports whether a download failed because the host no longer
-// has the file (HTTP 404 or 410).
+// fileGone reports whether a download failed because the file is gone: the
+// source says so (source.ErrFileGone, or the mod itself is gone), or the
+// host answered HTTP 404 or 410. A throttle, a refusal of the account or a
+// network failure is not: it says nothing about the list (#676 review).
 func fileGone(err error) bool {
+	if errors.Is(err, source.ErrFileGone) || errors.Is(err, domain.ErrModNotFound) {
+		return true
+	}
 	var status *httpStatusError
 	return errors.As(err, &status) && (status.code == http.StatusNotFound || status.code == http.StatusGone)
 }

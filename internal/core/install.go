@@ -415,7 +415,10 @@ func (s *Service) PlanInstall(ctx context.Context, game *domain.Game, profileNam
 		}
 	}
 
-	files, err := s.GetModFiles(ctx, game, sourceID, mod)
+	// #676 review: an install the user asked for picks the mod's current
+	// file, so its list is the source's own, never a stored one inside the
+	// change signal's lag.
+	files, err := s.GetModFiles(withFreshFileLists(ctx), game, sourceID, mod)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mod files: %w", err)
 	}
@@ -577,7 +580,7 @@ func (s *Service) PlanInstallMany(ctx context.Context, game *domain.Game, profil
 			continue
 		}
 
-		files, err := s.GetModFiles(ctx, game, mod.SourceID, mod)
+		files, err := s.GetModFiles(withFreshFileLists(ctx), game, mod.SourceID, mod) // #676 review: as PlanInstall
 		if err != nil {
 			entry.FetchError = fmt.Sprintf("failed to get mod files: %v", err)
 			continue
@@ -1276,14 +1279,13 @@ func (s *Service) resolveInstallTargetVersion(ctx context.Context, plan *Install
 // one is fetched again, and so is one in which targetVersion does not
 // resolve, before either is an error.
 func (s *Service) resolveInstallCandidatePool(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod, showArchived bool, targetVersion string, want []string) ([]domain.DownloadableFile, error) {
-	files, err := s.modFilesWanting(ctx, game, sourceID, mod, want)
+	files, stored, err := s.modFilesFrom(ctx, game, sourceID, mod, want)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mod files: %w", err)
 	}
-	pool, err := installCandidatePool(sourceID, files, showArchived, targetVersion)
-	if err != nil && targetVersion != "" && !freshFileLists(ctx) {
-		return s.resolveInstallCandidatePool(withFreshFileLists(ctx), game, sourceID, mod, showArchived, targetVersion, want)
-	}
+	_, pool, err := reselectFresh(ctx, s, game, sourceID, mod, want, files, stored, func(files []domain.DownloadableFile) ([]domain.DownloadableFile, error) {
+		return installCandidatePool(sourceID, files, showArchived, targetVersion)
+	})
 	return pool, err
 }
 

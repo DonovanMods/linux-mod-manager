@@ -1134,14 +1134,20 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   otherwise fetches and replaces it. One change-signal answer per game
   serves a whole flow.
   - A stale list never picks the wrong file:
+    - An install you ask for (`lmm install`, the web UI's Install) always
+      asks the source, so "the latest file" is the latest.
     - A flow that knows which file IDs it needs (a deploy's or switch's
       recorded files, a collection's pins, an install's `--file`) fetches
       the list again when one is missing.
-    - A version pin that does not resolve does the same.
+    - A version that a stored list lacks is looked for once in the
+      source's own list. That covers a version pin, and a switch, apply or
+      deploy entry with a version and no file IDs.
     - An update fetches its new version's files fresh, and so do the
       archive-matching flows.
-    - A mod its source no longer has, or a file a download finds gone
-      (HTTP 404/410), drops the stored list.
+    - A download that finds its file gone fetches the list again and
+      retries once in the same flow if the source still offers the file.
+    - A mod its source no longer has drops the stored list. A throttle, an
+      account refusal or a network error keeps it.
   - `lmm verify --refresh` and the web UI's Re-verify ask every source
     again.
   - Sources without a change signal are asked every time, as before.

@@ -112,8 +112,9 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	}
 	st.scope.ModName = mod.Name
 
-	files, err := s.modFilesWanting(ctx, game, ref.SourceID, mod, ref.FileIDs) // #676
+	files, fromStore, err := s.modFilesFrom(ctx, game, ref.SourceID, mod, ref.FileIDs) // #676
 	if supplied != nil {
+		fromStore = false // the supplied files are the answer, not the store's
 		files, err = suppliedFiles(files, err, ref, supplied)
 	}
 	if err != nil {
@@ -137,7 +138,9 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	// #662: stored ids whose main files mix versions heal to one (a
 	// collection's are installed as they are; its import plan's
 	// conversion said so).
-	sel, err := selectStoredFiles(files, fileIDsToUse, ref.Version, ref.FromCollection, mod.Version)
+	files, sel, err := reselectFresh(ctx, s, game, ref.SourceID, mod, ref.FileIDs, files, fromStore, func(fs []domain.DownloadableFile) (storedSelection, error) {
+		return selectStoredFiles(fs, fileIDsToUse, ref.Version, ref.FromCollection, mod.Version)
+	}) // #676 review
 	if err != nil {
 		// #660: "reinstall the mod or run 'lmm update'" is an installed
 		// mod's remedy. A pin the imported document names was never

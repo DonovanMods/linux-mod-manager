@@ -471,11 +471,13 @@ func (s *Service) previewStoredFiles(ctx context.Context, game *domain.Game, ref
 		if err != nil {
 			continue
 		}
-		files, err := s.modFilesWanting(ctx, game, ref.SourceID, mod, ref.FileIDs) // #676
+		files, stored, err := s.modFilesFrom(ctx, game, ref.SourceID, mod, ref.FileIDs) // #676
 		if err != nil {
 			continue
 		}
-		sel, err := selectStoredFiles(files, ref.FileIDs, ref.Version, false, mod.Version)
+		_, sel, err := reselectFresh(ctx, s, game, ref.SourceID, mod, ref.FileIDs, files, stored, func(fs []domain.DownloadableFile) (storedSelection, error) {
+			return selectStoredFiles(fs, ref.FileIDs, ref.Version, false, mod.Version)
+		}) // #676 review
 		if err != nil || sel.heal == nil {
 			continue
 		}

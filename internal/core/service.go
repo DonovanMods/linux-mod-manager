@@ -1620,14 +1620,13 @@ func (s *Service) gameOrNil(id string) *domain.Game {
 // #676: a version that does not resolve in a stored list is looked for
 // once more in the source's own, before it is an error.
 func (s *Service) ResolveModVersion(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod, version string) ([]domain.DownloadableFile, error) {
-	files, err := s.GetModFiles(ctx, game, sourceID, mod)
+	files, stored, err := s.modFilesFrom(ctx, game, sourceID, mod, nil)
 	if err != nil {
 		return nil, fmt.Errorf("listing files for version resolution: %w", err)
 	}
-	resolved, err := ResolveVersionFiles(sourceID, files, version)
-	if err != nil && !freshFileLists(ctx) {
-		return s.ResolveModVersion(withFreshFileLists(ctx), game, sourceID, mod, version)
-	}
+	_, resolved, err := reselectFresh(ctx, s, game, sourceID, mod, nil, files, stored, func(files []domain.DownloadableFile) ([]domain.DownloadableFile, error) {
+		return ResolveVersionFiles(sourceID, files, version)
+	})
 	return resolved, err
 }
 
