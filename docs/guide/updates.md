@@ -410,12 +410,24 @@ holding requests after too many, the line says until when, for example
 A collection you made yourself, by exporting your own profile, isn't
 checked: you're its author, so there's no newer revision to fetch.
 
-Other collections can't be checked that cheaply:
+A collection **imported from an address** (an `.lmmc` link) is checked
+too. When you import it, lmm notes the tags the address's server sent
+with it (its ETag and Last-Modified). The check sends them back, and a
+server that sees nothing changed answers "not modified" without sending
+the collection again, so it costs almost nothing. If the collection did
+change, lmm reads its version and says whether it's newer than yours. A
+server that sends no such tags, or a collection imported before lmm kept
+them, is downloaded in full to check, at most once in five minutes.
+Updating the collection notes the new version's tags.
 
-- **Imported from an address** (an `.lmmc` link): lmm would have to
-  download the whole collection to see its version, so the line says it
-  can't check automatically. **Update collection…** (or `lmm profile
-  sync <profile> --collection`) fetches it and shows what changed.
+The check waits at most 20 seconds for the address, so a slow server
+never holds up the update check, and a failed answer is remembered for
+the same five minutes. A collection that carries no version is reported
+as checked with its version unknown, and one older than yours as an
+error, since updating to it would be refused.
+
+Some collections can't be checked:
+
 - **Imported from a file**: there's nowhere to ask. Import the new
   version of the file with `lmm profile import <file> --force`.
 - **A Steam Workshop collection**: Steam keeps those items up to date

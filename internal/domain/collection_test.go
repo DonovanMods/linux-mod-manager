@@ -38,3 +38,12 @@ func TestCollectionOrigin_ImportURLHelpers(t *testing.T) {
 	plain := &domain.CollectionOrigin{SourceID: "nexusmods"}
 	require.Same(t, plain, plain.Redacted(), "nothing to redact")
 }
+
+// #674: the validators are the import address's, so an origin without the
+// address carries none either.
+func TestCollectionOrigin_WithoutImportURLDropsTheValidators(t *testing.T) {
+	o := &domain.CollectionOrigin{Author: "curator", ImportURL: "https://example.com/c.lmmc", ETag: `"x"`, LastModified: "y"}
+	require.Equal(t, &domain.CollectionOrigin{Author: "curator"}, o.WithoutImportURL())
+	only := &domain.CollectionOrigin{ImportURL: "https://example.com/c.lmmc", ETag: `"x"`}
+	require.Nil(t, only.WithoutImportURL())
+}

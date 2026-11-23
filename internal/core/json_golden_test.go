@@ -2259,6 +2259,22 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #674: an .lmmc address, checked by a conditional GET.
+			"collection_revision_status_url",
+			core.CollectionRevisionStatus{
+				Name: "Shared Setup", Origin: core.CollectionOriginURL, Installed: 1, Latest: 2,
+				Available: true, Checked: true, Sync: true,
+			},
+		},
+		{
+			// #674 review: the address's document carries no version.
+			"collection_revision_status_latest_unknown",
+			core.CollectionRevisionStatus{
+				Name: "Shared Setup", Origin: core.CollectionOriginURL, Installed: 1,
+				Checked: true, LatestUnknown: true, Sync: true,
+			},
+		},
+		{
 			// #673 review: the source is holding requests (#671).
 			"collection_revision_status_held",
 			core.CollectionRevisionStatus{

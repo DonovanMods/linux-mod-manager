@@ -6,6 +6,8 @@ package config_test
 // is unchanged, and an in-place save adds or removes only those keys.
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -98,4 +100,33 @@ func TestImportProfile_V0IgnoresCollectionAndExternal(t *testing.T) {
 	restored := config.ProfileFromExported(value)
 	require.Equal(t, profile.Collection, restored.Collection, "a snapshot (lmm's own record) restores them")
 	require.Equal(t, profile.External, restored.External)
+}
+
+// #674: a URL import's HTTP validators round-trip with its address, as
+// origin.etag and origin.last_modified, and are absent when unset.
+func TestSaveProfile_URLValidatorsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	profile := &domain.Profile{
+		Name: "p", GameID: "tg",
+		Mods: []domain.ModReference{{SourceID: "local", ModID: "a", Version: "1"}},
+		Collection: &domain.CollectionInfo{ID: "c", Version: 2, Origin: &domain.CollectionOrigin{
+			ImportURL: "https://example.invalid/c.lmmc", ETag: `W/"abc"`, LastModified: "Sun, 22 Nov 2026 10:00:00 GMT",
+		}},
+	}
+	require.NoError(t, config.SaveProfile(dir, profile))
+	reloaded, err := config.LoadProfile(dir, "tg", "p")
+	require.NoError(t, err)
+	require.Equal(t, profile.Collection, reloaded.Collection)
+
+	data, err := os.ReadFile(filepath.Join(dir, "games", "tg", "profiles", "p.yaml"))
+	require.NoError(t, err)
+	require.Contains(t, string(data), "etag: W/\"abc\"")
+	require.Contains(t, string(data), "last_modified: Sun, 22 Nov 2026 10:00:00 GMT")
+
+	profile.Collection.Origin.ETag, profile.Collection.Origin.LastModified = "", ""
+	require.NoError(t, config.SaveProfile(dir, profile))
+	data, err = os.ReadFile(filepath.Join(dir, "games", "tg", "profiles", "p.yaml"))
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "etag")
+	require.NotContains(t, string(data), "last_modified")
 }

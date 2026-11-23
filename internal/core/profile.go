@@ -1252,7 +1252,7 @@ func (pm *ProfileManager) Export(ctx context.Context, gameID, profileName string
 // origin (#622): what every export writes, since the address is this
 // machine's subscription, not the collection's. c itself is left as it is.
 func withoutImportURL(c *domain.CollectionInfo) *domain.CollectionInfo {
-	if c == nil || c.Origin == nil || c.Origin.ImportURL == "" {
+	if c == nil || c.Origin == nil || (c.Origin.ImportURL == "" && c.Origin.ETag == "" && c.Origin.LastModified == "") {
 		return c
 	}
 	out := *c

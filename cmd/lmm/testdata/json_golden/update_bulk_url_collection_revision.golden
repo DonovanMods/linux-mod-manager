@@ -1,0 +1,18 @@
+{
+  "game_id": "cyber",
+  "profile": "shared",
+  "updates": [],
+  "skipped": {
+    "pinned": 0,
+    "local": 1
+  },
+  "collection_revision": {
+    "name": "Shared Setup",
+    "origin": "url",
+    "installed": 1,
+    "latest": 2,
+    "available": true,
+    "checked": true,
+    "sync": true
+  }
+}

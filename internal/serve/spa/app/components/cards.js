@@ -409,6 +409,10 @@ function revisionSentence(r) {
   if (r.available) {
     return `${name}: revision ${r.latest} available (installed ${r.installed}).`;
   }
+  if (r.checked && r.latest_unknown) {
+    // issue 674 review: the collection the address serves has no version.
+    return `${name}: checked, but its document carries no version, so lmm can't tell whether it's newer.`;
+  }
   if (r.checked && r.installed_unknown) {
     // issue 673 review: no installed revision recorded - nothing to compare.
     return `${name}: latest revision ${r.latest} (the installed revision isn't recorded).`;
@@ -423,11 +427,12 @@ function revisionSentence(r) {
     });
     return `${name}: ${r.held_by || "its source"} is holding requests until ${until}; revision not checked.`;
   }
+  if (r.reason === "url") {
+    // issue 674: an address lmm does not fetch at all; error says why.
+    return `${name}: lmm can't fetch its address (${r.error || "not an https address with a host"}), so it can't check it for a new version.`;
+  }
   if (r.error)
     return `${name}: couldn't check for a new revision (${r.error}).`;
-  if (r.reason === "url") {
-    return `${name}: lmm can't check its address for a new version automatically.`;
-  }
   if (r.reason === "file") {
     return `${name}: imported from a file, so lmm can't check for a new version.`;
   }

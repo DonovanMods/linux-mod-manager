@@ -204,6 +204,8 @@ collection from an address instead of a file:
     origin:
       author: …                                        # the document's own credit, kept
       import_url: https://example.com/coop.lmmc?dl=1   # where this machine fetched it
+      etag: '"5f2b-1a"'                                  # the response's validators (#674)
+      last_modified: Sun, 22 Nov 2026 10:00:00 GMT
   ```
 
   It is the address as given, without its `user:password@` part (used for
@@ -213,7 +215,11 @@ collection from an address instead of a file:
   (see [Updating from the origin](#updating-from-the-origin)). `import_url` is this machine's record: lmm sets it only at a
   URL import, ignores it in a document, and leaves it out of every export
   (`lmm profile export`, `-o`, `--json`, and the web UI's) and of a
-  duplicated profile.
+  duplicated profile. `etag` and `last_modified` (#674) are the HTTP
+  validators the address answered the import with, recorded under the same
+  rules (and refreshed by a collection update): the update check sends
+  them back in a conditional GET, so a document that has not changed is
+  not downloaded again. Either is absent when the server sent none.
 - **What lmm shows.** The address is unredacted only in the profile file
   (and lmm's own snapshots of it). Everywhere lmm shows or logs it - the
   plan, every `--json` document (the profile commands' `profile` result

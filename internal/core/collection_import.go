@@ -78,6 +78,10 @@ type CollectionImportRequest struct {
 	// ProfileName names the profile to create (`--as`). Empty uses the
 	// document's own name.
 	ProfileName string
+	// validators are the HTTP validators a URL import's response carried
+	// (#674), recorded beside the address. Set by PlanCollectionImportURL
+	// only.
+	validators collectionValidators
 }
 
 // CollectionImport is the collection half of a version-1 import plan
@@ -583,6 +587,9 @@ func (s *Service) planCollectionImport(ctx context.Context, req CollectionImport
 			origin = *info.Origin
 		}
 		origin.ImportURL = importURL
+		// #674: the validators the address answered with, which the
+		// collection's revision check sends back.
+		origin.ETag, origin.LastModified = req.validators.etag, req.validators.lastModified
 		info.Origin = &origin
 	}
 	if !info.IsZero() {
@@ -1038,6 +1045,8 @@ func sanitizeCollection(doc *domain.CollectionDocument) (warnings []string, err 
 		// a document's to set: a document naming one could point a later
 		// update anywhere.
 		o.ImportURL = ""
+		// #674: nor the address's validators.
+		o.ETag, o.LastModified = "", ""
 		line("origin.source_id", &o.SourceID)
 		line("origin.slug", &o.Slug)
 		line("origin.url", &o.URL)

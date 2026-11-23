@@ -89,9 +89,12 @@ it pins) is not checked at all: the collection decides its version, so the
 check prints one line counting those mods instead of a row apiece, and
 'lmm profile sync <profile> --collection' updates them. The collection
 itself is checked instead: for a NexusMods collection, one request asks
-for its latest revision, and a line says whether a newer one than the
-installed revision is out. A collection imported from an https address or
-a file can't be checked that cheaply; the line says so. Unlocking a mod
+for its latest revision; for one imported from an https address, a
+conditional request sends back the ETag and Last-Modified the address
+answered the import with, so an unchanged document costs no download. A
+line says whether a newer revision than the installed one is out. A
+collection imported from a file can't be checked; the line says so. The
+answer is kept for five minutes; --refresh asks again. Unlocking a mod
 ('lmm mod unlock') makes it yours and returns it to the check. A lock you
 set yourself is still checked, and its update shown as locked.
 
@@ -1622,6 +1625,9 @@ func printCollectionRevision(c *core.CollectionRevisionStatus, profile string) {
 	switch {
 	case c.Available:
 		fmt.Printf("Collection %s: revision %d available (installed %d) — %s updates it.\n", c.Name, c.Latest, c.Installed, sync)
+	case c.Checked && c.LatestUnknown:
+		// #674 review: the collection the address serves has no version.
+		fmt.Printf("Collection %s: checked, but its document carries no version, so lmm can't tell whether it's newer — %s shows what changed.\n", c.Name, sync)
 	case c.Checked && c.InstalledUnknown:
 		// #673 review: no installed revision recorded, nothing to compare.
 		fmt.Printf("Collection %s: latest revision %d (the installed revision isn't recorded) — %s compares them.\n", c.Name, c.Latest, sync)
@@ -1631,10 +1637,12 @@ func printCollectionRevision(c *core.CollectionRevisionStatus, profile string) {
 		// #673 review: #671's hold, said with when it ends.
 		fmt.Printf("Collection %s: %s is holding requests until %s; revision not checked.\n",
 			c.Name, cmp.Or(c.HeldBy, "its source"), c.HeldUntil.Local().Format("15:04"))
+	case c.Reason == core.CollectionUncheckedURL:
+		// #674: an address lmm does not fetch at all; Error says why.
+		fmt.Printf("Collection %s: lmm can't fetch its address (%s), so it can't check it for a new version.\n", c.Name,
+			cmp.Or(c.Error, "not an https address with a host"))
 	case c.Error != "":
 		fmt.Printf("Collection %s: couldn't check for a new revision (%s) — %s checks it.\n", c.Name, c.Error, sync)
-	case c.Reason == core.CollectionUncheckedURL:
-		fmt.Printf("Collection %s: lmm can't check an address for a new version automatically — %s fetches it and shows what changed.\n", c.Name, sync)
 	case c.Reason == core.CollectionUncheckedFile:
 		fmt.Printf("Collection %s: imported from a file, so lmm can't check for a new version — import the new version with 'lmm profile import <file> --force'.\n", c.Name)
 	default:
