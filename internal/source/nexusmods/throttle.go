@@ -170,6 +170,19 @@ func keyFingerprint(key string) string {
 // quotaScope is the scope of the key requests are sent with now.
 func (h *nexusHolds) quotaScope() string { return keyFingerprint(h.key()) }
 
+// requestQuotaScope is the scope of the key req was sent with (#675
+// review): a quota a response reports spent is that key's, even when the
+// configured key changed while the request was in flight. A request with
+// no apikey header is the configured key's.
+func (h *nexusHolds) requestQuotaScope(req *http.Request) string {
+	if req != nil {
+		if key := req.Header.Get("apikey"); key != "" {
+			return keyFingerprint(key)
+		}
+	}
+	return h.quotaScope()
+}
+
 // asHold is a store record as the hold a refusal or a notice names.
 func asHold(rec httpclient.HoldRecord) source.Hold {
 	return source.Hold{Source: serviceName, Until: rec.Until, Reason: rec.Reason}
@@ -192,9 +205,10 @@ func (h *nexusHolds) Named(req *http.Request, until time.Time, why string) sourc
 	return held
 }
 
-// Quota implements httpclient.QuotaKeeper: the current key's.
+// Quota implements httpclient.QuotaKeeper: the key's that req was sent
+// with.
 func (h *nexusHolds) Quota(req *http.Request, until time.Time, why string) source.Hold {
-	h.store.Named(h.quotaScope(), until, why)
+	h.store.Named(h.requestQuotaScope(req), until, why)
 	held, _ := h.Active(req)
 	return held
 }

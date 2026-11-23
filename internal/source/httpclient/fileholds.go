@@ -348,7 +348,7 @@ func (h *FileHolds) readLocked(now time.Time) (holdState, bool) {
 	state := h.read(now)
 	stale := state.stale(now, h.cfg.Cooldown)
 	if h.diskFailed {
-		state = state.overlay(h.mem, now)
+		state = state.overlay(h.mem, now, h.cfg.Cooldown)
 		stale = false // the file cannot be written; do not keep trying on every read
 	}
 	return state, stale
@@ -548,16 +548,34 @@ func (st holdState) isZero() bool {
 	return st.Host.isZero() && len(st.Scopes) == 0
 }
 
-// overlay lays mine's holds over st wherever mine's ends later.
-func (st holdState) overlay(mine holdState, now time.Time) holdState {
+// overlay lays mine over st: a hold of mine's wherever it ends later, and
+// a failure streak of mine's still inside its cooldown wherever it is the
+// longer one (#675 review) - while the file cannot be written, the streak
+// lives only in memory, and dropping it would keep the breaker from ever
+// tripping.
+func (st holdState) overlay(mine holdState, now time.Time, cooldown time.Duration) holdState {
 	out := st.clone()
-	if mine.Host.ActiveAt(now) && mine.Host.Until.After(out.Host.Until) {
-		out.Host = mine.Host
-	}
+	out.Host = overlayRecord(out.Host, mine.Host, now, cooldown)
 	for name, rec := range mine.Scopes {
-		if rec.ActiveAt(now) && rec.Until.After(out.get(name).Until) {
-			out.set(name, rec)
+		out.set(name, overlayRecord(out.get(name), rec, now, cooldown))
+	}
+	return out
+}
+
+// overlayRecord is overlay for one scope's record.
+func overlayRecord(file, mine HoldRecord, now time.Time, cooldown time.Duration) HoldRecord {
+	out := file
+	if mine.ActiveAt(now) && mine.Until.After(out.Until) {
+		out.Until, out.Reason, out.Named = mine.Until, mine.Reason, mine.Named
+	}
+	live := func(r HoldRecord) int {
+		if r.Failures > 0 && now.Sub(r.LastFailure) <= cooldown {
+			return r.Failures
 		}
+		return 0
+	}
+	if live(mine) > live(out) {
+		out.Failures, out.LastFailure = mine.Failures, mine.LastFailure
 	}
 	return out
 }

@@ -221,3 +221,35 @@ func TestFileHolds_ScopesAreKeptUnderTheConfiguredMember(t *testing.T) {
 	assert.Contains(t, string(data), `"communities":{"alpha":`)
 	assert.Contains(t, string(data), `"schema":1`)
 }
+
+// TestFileHolds_ABreakerTripsWhileTheFileCannotBeWritten (#675 review): a
+// store whose writes fail keeps its failure streak in memory, so the
+// breaker still trips - an unwritable file must not disarm it.
+func TestFileHolds_ABreakerTripsWhileTheFileCannotBeWritten(t *testing.T) {
+	dir, clock := t.TempDir(), newFakeClock()
+	path := filepath.Join(dir, "holds.json")
+	require.NoError(t, os.Mkdir(path, 0o700), "a directory where the file should be: every publish fails")
+	require.NoError(t, os.WriteFile(filepath.Join(path, "keep"), nil, 0o600), "and one that is never removed")
+	holds := newTestFileHolds(path, clock)
+
+	holds.Failed("", "HTTP 503")
+	holds.Failed("", "HTTP 503")
+	_, _, ok := holds.Active("")
+	require.False(t, ok, "two failures are not three")
+	_, scopes := holds.Snapshot()
+	assert.Empty(t, scopes)
+	host, _ := holds.Snapshot()
+	assert.Equal(t, 2, host.Failures, "the streak survives the failed writes")
+
+	held := holds.Failed("", "HTTP 503")
+	assert.True(t, held.ActiveAt(clock.Now()))
+	_, _, ok = holds.Active("")
+	assert.True(t, ok, "the third failure trips the breaker, in memory")
+
+	// A streak past its cooldown is over, written or not.
+	clock.Advance(6 * time.Minute)
+	other := newTestFileHolds(path, clock)
+	other.Failed("alpha", "x")
+	clock.Advance(6 * time.Minute)
+	assert.Equal(t, 1, other.Failed("alpha", "x").Failures, "a stale in-memory streak does not count")
+}

@@ -246,3 +246,32 @@ func TestNexusHolds_KeyFingerprintIsStableAndOneWay(t *testing.T) {
 	assert.False(t, strings.Contains(a, "free"))
 	assert.Regexp(t, `^[0-9a-f]{32}$`, keyFingerprint(""), "no key has a scope of its own too")
 }
+
+// TestNexusHolds_AQuotaHoldIsTheKeyThatSpentIt (#675 review): the quota a
+// response reports spent is the key the request was sent with, even when
+// the key changes while it is in flight.
+func TestNexusHolds_AQuotaHoldIsTheKeyThatSpentIt(t *testing.T) {
+	dataDir, clock := t.TempDir(), newPersistClock()
+	var nm *NexusMods
+	var once sync.Once
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		once.Do(func() { nm.SetAPIKey("premium-key") }) // the user re-keys mid-request
+		w.Header().Set("X-RL-Daily-Remaining", "0")
+		w.Header().Set("X-RL-Hourly-Remaining", "0")
+		w.Header().Set("X-RL-Hourly-Reset", "2026-11-22T12:40:00+00:00")
+		_, _ = w.Write([]byte(filesJSON))
+	}))
+	defer srv.Close()
+	nm = New(srv.Client(), "free-key", WithDataDir(dataDir))
+	nm.client.SetBaseURL(srv.URL)
+	nm.client.setRetryClock(clock.now, clock.sleep)
+
+	_, err := nm.GetModFiles(context.Background(), persistMod)
+	require.NoError(t, err)
+
+	host, scopes := nm.client.holds.store.Snapshot()
+	assert.False(t, host.ActiveAt(clock.now()))
+	require.Len(t, scopes, 1)
+	assert.Contains(t, scopes, keyFingerprint("free-key"), "the hold is the key that spent the quota")
+	assert.NotContains(t, scopes, keyFingerprint("premium-key"))
+}
