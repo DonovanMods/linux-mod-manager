@@ -92,10 +92,11 @@ func (s *Service) PlanCollectionImportURL(ctx context.Context, req CollectionURL
 	if err != nil {
 		return nil, err
 	}
-	data, err := s.fetchCollectionDocument(ctx, u)
+	fetched, err := s.fetchCollection(ctx, u, collectionValidators{})
 	if err != nil {
 		return nil, err
 	}
+	data := fetched.data
 	var warnings []string
 	if u.User != nil {
 		warnings = append(warnings, "the address's credentials were used for this download only and are not recorded: a later update of this collection fetches the address without them")
@@ -104,6 +105,7 @@ func (s *Service) PlanCollectionImportURL(ctx context.Context, req CollectionURL
 	recorded.User = nil
 	return s.planCollectionImport(ctx, CollectionImportRequest{
 		Data: data, Input: CollectionFromURL, GameID: req.GameID, ProfileName: req.ProfileName,
+		validators: fetched.validators,
 	}, recorded.String(), warnings, nil)
 }
 
@@ -134,12 +136,56 @@ func parseCollectionURL(raw string) (*url.URL, error) {
 	return u, nil
 }
 
+// collectionValidators are an address's HTTP validators (#674): the ETag
+// and Last-Modified it answered with, which a conditional GET sends back.
+type collectionValidators struct {
+	etag, lastModified string
+}
+
+// maxValidatorLen bounds a validator lmm records: an ETag or an HTTP date
+// is short, and a value longer than this is not one worth keeping.
+const maxValidatorLen = 256
+
+// validatorValue is a response header's value as lmm records it: empty
+// when it is too long or holds a control character, which no ETag or
+// HTTP date does - so nothing odd reaches the profile file or a header.
+func validatorValue(v string) string {
+	if len(v) > maxValidatorLen {
+		return ""
+	}
+	for _, r := range v {
+		if r < 0x20 || r == 0x7f {
+			return ""
+		}
+	}
+	return v
+}
+
+// collectionFetch is fetchCollection's answer: the body, or - for a
+// conditional request the address answered 304 - notModified; and the
+// validators the response carried.
+type collectionFetch struct {
+	data        []byte
+	notModified bool
+	validators  collectionValidators
+}
+
 // fetchCollectionDocument GETs u and returns its body: a `.lmmc`
 // container up to maxCollectionContainer, or anything else - a YAML
 // document - up to maxCollectionDocument, decided by the first bytes and
 // enforced as the body arrives. Nothing it returns quotes u's userinfo or
 // query.
 func (s *Service) fetchCollectionDocument(ctx context.Context, u *url.URL) ([]byte, error) {
+	f, err := s.fetchCollection(ctx, u, collectionValidators{})
+	return f.data, err
+}
+
+// fetchCollection is fetchCollectionDocument, also returning the
+// response's validators (#674). With validators to present (cond), the
+// request is conditional (If-None-Match, If-Modified-Since), and a 304
+// answers notModified with no body.
+func (s *Service) fetchCollection(ctx context.Context, u *url.URL, cond collectionValidators) (collectionFetch, error) {
+	var f collectionFetch
 	ctx, cancel := context.WithTimeout(ctx, collectionFetchTimeout)
 	defer cancel()
 	shown := domain.RedactURL(u.String())
@@ -147,7 +193,13 @@ func (s *Service) fetchCollectionDocument(ctx context.Context, u *url.URL) ([]by
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		// The error quotes the raw address; only the redacted one is shown.
-		return nil, fmt.Errorf("%w: %s cannot be requested", ErrCollectionURL, shown)
+		return f, fmt.Errorf("%w: %s cannot be requested", ErrCollectionURL, shown)
+	}
+	if cond.etag != "" {
+		req.Header.Set("If-None-Match", cond.etag)
+	}
+	if cond.lastModified != "" {
+		req.Header.Set("If-Modified-Since", cond.lastModified)
 	}
 	client := *s.downloader.httpClient
 	base := client.CheckRedirect
@@ -177,25 +229,33 @@ func (s *Service) fetchCollectionDocument(ctx context.Context, u *url.URL) ([]by
 			if where == "" {
 				where = shown
 			}
-			return nil, fmt.Errorf("%w: requesting %s: %w", ErrCollectionFetch, where, safeCause(uerr.Err))
+			return f, fmt.Errorf("%w: requesting %s: %w", ErrCollectionFetch, where, safeCause(uerr.Err))
 		}
-		return nil, fmt.Errorf("%w: requesting %s: %w", ErrCollectionFetch, shown, safeCause(err))
+		return f, fmt.Errorf("%w: requesting %s: %w", ErrCollectionFetch, shown, safeCause(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
+	f.validators = collectionValidators{
+		etag:         validatorValue(resp.Header.Get("ETag")),
+		lastModified: validatorValue(resp.Header.Get("Last-Modified")),
+	}
+	if resp.StatusCode == http.StatusNotModified && (cond.etag != "" || cond.lastModified != "") {
+		f.notModified = true
+		return f, nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		// The status code and Go's own text for it, never the server's
 		// reason phrase, which could carry terminal escapes.
-		return nil, fmt.Errorf("%w: %s answered HTTP %d %s", ErrCollectionFetch, shown, resp.StatusCode, http.StatusText(resp.StatusCode))
+		return f, fmt.Errorf("%w: %s answered HTTP %d %s", ErrCollectionFetch, shown, resp.StatusCode, http.StatusText(resp.StatusCode))
 	}
 	if resp.ContentLength > maxCollectionContainer {
-		return nil, fmt.Errorf("%w: %s is %d bytes, over the %d-byte limit for a collection", ErrInvalidCollection, shown, resp.ContentLength, maxCollectionContainer)
+		return f, fmt.Errorf("%w: %s is %d bytes, over the %d-byte limit for a collection", ErrInvalidCollection, shown, resp.ContentLength, maxCollectionContainer)
 	}
 
 	// The first bytes decide the cap: only a container may be large.
 	head := make([]byte, len(zipMagic))
 	n, err := io.ReadFull(resp.Body, head)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, fmt.Errorf("%w: reading %s: %w", ErrCollectionFetch, shown, safeCause(err))
+		return f, fmt.Errorf("%w: reading %s: %w", ErrCollectionFetch, shown, safeCause(err))
 	}
 	head = head[:n]
 	limit, what := int64(maxCollectionDocument), "document"
@@ -203,16 +263,17 @@ func (s *Service) fetchCollectionDocument(ctx context.Context, u *url.URL) ([]by
 		limit, what = maxCollectionContainer, "container"
 	}
 	if resp.ContentLength > limit {
-		return nil, fmt.Errorf("%w: the %s at %s is %d bytes, over the %d-byte limit", ErrInvalidCollection, what, shown, resp.ContentLength, limit)
+		return f, fmt.Errorf("%w: the %s at %s is %d bytes, over the %d-byte limit", ErrInvalidCollection, what, shown, resp.ContentLength, limit)
 	}
 	data, err := io.ReadAll(io.LimitReader(io.MultiReader(bytes.NewReader(head), resp.Body), limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("%w: reading %s: %w", ErrCollectionFetch, shown, safeCause(err))
+		return f, fmt.Errorf("%w: reading %s: %w", ErrCollectionFetch, shown, safeCause(err))
 	}
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("%w: the %s at %s is over the %d-byte limit", ErrInvalidCollection, what, shown, limit)
+		return f, fmt.Errorf("%w: the %s at %s is over the %d-byte limit", ErrInvalidCollection, what, shown, limit)
 	}
-	return data, nil
+	f.data = data
+	return f, nil
 }
 
 // safeCause is err with control and formatting characters cleaned from

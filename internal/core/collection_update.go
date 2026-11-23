@@ -496,6 +496,7 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 	var container bool
 	var bundle *collectionBundle
 	var raw []byte
+	var validators collectionValidators // #674: a URL origin's response's
 	switch origin.input {
 	case CollectionFromURL:
 		plan.URL = domain.RedactURL(origin.url)
@@ -503,10 +504,12 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 		if err != nil {
 			return nil, err
 		}
-		data, err := s.fetchCollectionDocument(ctx, u)
+		fetched, err := s.fetchCollection(ctx, u, collectionValidators{})
 		if err != nil {
 			return nil, err
 		}
+		data := fetched.data
+		validators = fetched.validators
 		var more []string
 		doc, container, bundle, more, err = s.readCollectionData(data, true)
 		if err != nil {
@@ -637,6 +640,8 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 			o = *info.Origin
 		}
 		o.ImportURL = origin.url
+		// #674: the new version's validators, for the next revision check.
+		o.ETag, o.LastModified = validators.etag, validators.lastModified
 		info.Origin = &o
 	}
 	plan.doc, plan.info = doc, &info
@@ -1247,8 +1252,13 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 	}
 	// #673: the profile is at a new revision; the kept latest-revision
 	// answer would compare the old one against it.
-	if plan.Origin == CollectionFromSource {
+	switch plan.Origin {
+	case CollectionFromSource:
 		s.forgetCollectionRevision(plan.SourceID, game.SourceIDs[plan.SourceID], plan.Slug)
+	case CollectionFromURL:
+		if origin, err := updateOrigin(plan.base); err == nil {
+			s.forgetURLCollectionRevision(origin.url)
+		}
 	}
 	for _, it := range plan.addedEntries() {
 		if marks[it.Key()] {

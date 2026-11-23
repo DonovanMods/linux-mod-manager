@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -65,6 +66,30 @@ type updateFixture struct {
 	archive   atomic.Pointer[[]byte]
 	document  atomic.Pointer[[]byte]
 	server    *httptest.Server
+	// validators, when set, are what /c.yaml answers with and honours
+	// (#674): an ETag and a Last-Modified, and a 304 for a request that
+	// presents the current one. docRequests records each request's
+	// headers.
+	validators  atomic.Pointer[docValidators]
+	docMu       sync.Mutex
+	docRequests []http.Header
+}
+
+// docValidators are /c.yaml's HTTP validators (#674).
+type docValidators struct{ etag, lastModified string }
+
+// docRequestCount is how many times /c.yaml was requested.
+func (f *updateFixture) docRequestCount() int {
+	f.docMu.Lock()
+	defer f.docMu.Unlock()
+	return len(f.docRequests)
+}
+
+// lastDocRequest is the headers /c.yaml was last requested with.
+func (f *updateFixture) lastDocRequest() http.Header {
+	f.docMu.Lock()
+	defer f.docMu.Unlock()
+	return f.docRequests[len(f.docRequests)-1]
 }
 
 // newUpdateFixture is a game with a NexusMods double whose collection
@@ -81,7 +106,25 @@ func newUpdateFixture(t *testing.T) *updateFixture {
 	f.document.Store(&empty)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/recipe.7z", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(*f.archive.Load()) })
-	mux.HandleFunc("/c.yaml", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(*f.document.Load()) })
+	mux.HandleFunc("/c.yaml", func(w http.ResponseWriter, r *http.Request) {
+		f.docMu.Lock()
+		f.docRequests = append(f.docRequests, r.Header.Clone())
+		f.docMu.Unlock()
+		if v := f.validators.Load(); v != nil {
+			if v.etag != "" {
+				w.Header().Set("ETag", v.etag)
+			}
+			if v.lastModified != "" {
+				w.Header().Set("Last-Modified", v.lastModified)
+			}
+			inm, ims := r.Header.Get("If-None-Match"), r.Header.Get("If-Modified-Since")
+			if (v.etag != "" && inm == v.etag) || (inm == "" && v.lastModified != "" && ims == v.lastModified) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+		_, _ = w.Write(*f.document.Load())
+	})
 	f.server = httptest.NewTLSServer(mux)
 	t.Cleanup(f.server.Close)
 	home := t.TempDir()

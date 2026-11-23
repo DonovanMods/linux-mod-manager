@@ -70,8 +70,8 @@ func TestDoUpdate_CollectionRevisionLines(t *testing.T) {
 	}{
 		{"up to date", &domain.CollectionOrigin{SourceID: "test-src", Slug: "abc123", Revision: 3}, 3,
 			"Collection Night City: up to date (revision 3)."},
-		{"an .lmmc address", &domain.CollectionOrigin{ImportURL: "https://example.com/night.lmmc"}, 4,
-			"Collection Night City: lmm can't check an address for a new version automatically — 'lmm profile sync default --collection' fetches it and shows what changed."},
+		{"an address lmm does not fetch", &domain.CollectionOrigin{ImportURL: "http://example.com/night.lmmc"}, 4,
+			"Collection Night City: its address isn't an https one, so lmm can't check it for a new version."},
 		{"a file", nil, 4,
 			"Collection Night City: imported from a file, so lmm can't check for a new version — import the new version with 'lmm profile import <file> --force'."},
 	}

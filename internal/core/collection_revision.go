@@ -11,9 +11,12 @@ package core
 //   - a source's collection (NexusMods, `--nexus-collection`): the source's
 //     source.CollectionRevisionChecker, one GraphQL request through its
 //     retrying client (#671), so a rate-limit hold applies;
-//   - an .lmmc address (#622): not checked. lmm records no validator (ETag,
-//     Last-Modified) for the address, so the only way to learn its version
-//     is to fetch the whole document - which is what the sync plan does;
+//   - an .lmmc address (#622): a conditional GET with the ETag and
+//     Last-Modified the address answered the import (or the last update)
+//     with (#674). A 304 is up to date; a 200 is read, within the import's
+//     size cap, for its collection version. With no validators recorded (a
+//     profile imported before #674, or a server sending neither) it is a
+//     plain GET of the whole document - at most once per cache window;
 //   - a file import: not checked - there is nothing to ask. A collection
 //     the user AUTHORED (an exported profile: an identity, no origin) is
 //     no import at all and reports nothing (#673 review): its refs carry
@@ -46,8 +49,9 @@ const (
 
 // Why a CollectionRevisionStatus was not checked (Reason).
 const (
-	// CollectionUncheckedURL: an .lmmc address can only be checked by
-	// fetching the whole document, which is the sync plan's job.
+	// CollectionUncheckedURL: the profile's .lmmc address is not one lmm
+	// fetches (not an absolute https URL). Since #674 every other address
+	// is checked, by a conditional GET.
 	CollectionUncheckedURL = "url"
 	// CollectionUncheckedFile: a file import has nowhere to ask.
 	CollectionUncheckedFile = "file"
@@ -158,7 +162,8 @@ func (s *Service) collectionRevision(ctx context.Context, game *domain.Game, pro
 		st.Origin, st.Reason = CollectionOriginFile, CollectionUncheckedFile
 		return st
 	case origin.input == CollectionFromURL:
-		st.Origin, st.Reason = CollectionOriginURL, CollectionUncheckedURL
+		st.Origin = CollectionOriginURL
+		s.checkURLCollection(ctx, c, origin.url, st, refresh)
 		return st
 	}
 	st.Origin, st.SourceID = CollectionOriginSource, origin.sourceID
@@ -191,11 +196,75 @@ func (s *Service) collectionRevision(ctx context.Context, game *domain.Game, pro
 		}
 		s.keepCollectionRevision(key, latest)
 	}
+	settleRevision(st, latest)
+	return st
+}
+
+// settleRevision records a checked answer, latest, on st: compared with the
+// installed revision when there is one.
+func settleRevision(st *CollectionRevisionStatus, latest int) {
 	st.Checked, st.Latest = true, latest
 	if st.Installed == 0 {
 		st.InstalledUnknown = true
-		return st
+		return
 	}
 	st.Available = latest > st.Installed
-	return st
+}
+
+// urlRevisionKey keys a URL origin's kept answer (#674) by its address.
+func urlRevisionKey(importURL string) string {
+	return collectionRevisionKey(CollectionOriginURL, "", importURL)
+}
+
+// checkURLCollection checks an .lmmc address's collection (#674) onto st:
+// a conditional GET with c's recorded validators - a 304 is the installed
+// version - or, for a 200, the version the document now carries. The
+// validators are not updated: they stay the installed version's until a
+// collection update records the new one's, so a newer version is reported
+// until it is taken. A document that is another collection is an error, as
+// the update would refuse it.
+func (s *Service) checkURLCollection(ctx context.Context, c *domain.CollectionInfo, importURL string, st *CollectionRevisionStatus, refresh bool) {
+	key := urlRevisionKey(importURL)
+	if !refresh {
+		if latest, ok := s.keptCollectionRevision(key); ok {
+			settleRevision(st, latest)
+			return
+		}
+	}
+	u, err := parseCollectionURL(importURL)
+	if err != nil {
+		st.Reason = CollectionUncheckedURL
+		return
+	}
+	fetched, err := s.fetchCollection(ctx, u, collectionValidators{etag: c.Origin.ETag, lastModified: c.Origin.LastModified})
+	if err != nil {
+		st.Error = err.Error()
+		var later *source.RetryLaterError
+		if errors.As(err, &later) {
+			st.HeldUntil, st.HeldBy = later.Until, later.Source
+		}
+		return
+	}
+	latest := st.Installed
+	if !fetched.notModified {
+		doc, _, _, _, err := s.readCollectionData(fetched.data, true)
+		if err != nil {
+			st.Error = err.Error()
+			return
+		}
+		if c.ID != "" && doc.Info.ID != c.ID {
+			st.Error = (&CollectionUpdateMismatchError{Code: CollectionUpdateDifferentCollection, ID: c.ID, FetchedID: doc.Info.ID}).Error()
+			return
+		}
+		latest = doc.Info.Version
+	}
+	s.keepCollectionRevision(key, latest)
+	settleRevision(st, latest)
+}
+
+// forgetURLCollectionRevision drops a URL origin's kept answer (#674).
+func (s *Service) forgetURLCollectionRevision(importURL string) {
+	s.collectionRevisionsMu.Lock()
+	defer s.collectionRevisionsMu.Unlock()
+	delete(s.collectionRevisions, urlRevisionKey(importURL))
 }

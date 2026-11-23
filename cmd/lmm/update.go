@@ -89,9 +89,12 @@ it pins) is not checked at all: the collection decides its version, so the
 check prints one line counting those mods instead of a row apiece, and
 'lmm profile sync <profile> --collection' updates them. The collection
 itself is checked instead: for a NexusMods collection, one request asks
-for its latest revision, and a line says whether a newer one than the
-installed revision is out. A collection imported from an https address or
-a file can't be checked that cheaply; the line says so. Unlocking a mod
+for its latest revision; for one imported from an https address, a
+conditional request sends back the ETag and Last-Modified the address
+answered the import with, so an unchanged document costs no download. A
+line says whether a newer revision than the installed one is out. A
+collection imported from a file can't be checked; the line says so. The
+answer is kept for five minutes; --refresh asks again. Unlocking a mod
 ('lmm mod unlock') makes it yours and returns it to the check. A lock you
 set yourself is still checked, and its update shown as locked.
 
@@ -1634,7 +1637,8 @@ func printCollectionRevision(c *core.CollectionRevisionStatus, profile string) {
 	case c.Error != "":
 		fmt.Printf("Collection %s: couldn't check for a new revision (%s) — %s checks it.\n", c.Name, c.Error, sync)
 	case c.Reason == core.CollectionUncheckedURL:
-		fmt.Printf("Collection %s: lmm can't check an address for a new version automatically — %s fetches it and shows what changed.\n", c.Name, sync)
+		// #674: every https address is checked; this one is not https.
+		fmt.Printf("Collection %s: its address isn't an https one, so lmm can't check it for a new version.\n", c.Name)
 	case c.Reason == core.CollectionUncheckedFile:
 		fmt.Printf("Collection %s: imported from a file, so lmm can't check for a new version — import the new version with 'lmm profile import <file> --force'.\n", c.Name)
 	default:

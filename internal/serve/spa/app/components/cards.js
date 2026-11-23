@@ -426,7 +426,7 @@ function revisionSentence(r) {
   if (r.error)
     return `${name}: couldn't check for a new revision (${r.error}).`;
   if (r.reason === "url") {
-    return `${name}: lmm can't check its address for a new version automatically.`;
+    return `${name}: its address isn't an https one, so lmm can't check it for a new version.`;
   }
   if (r.reason === "file") {
     return `${name}: imported from a file, so lmm can't check for a new version.`;

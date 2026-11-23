@@ -108,7 +108,7 @@ func TestCheckGameUpdateReport_ARevisionCheckFailureDoesNotFailTheCheck(t *testi
 
 func TestCheckGameUpdateReport_OriginsThatCannotBeChecked(t *testing.T) {
 	t.Run("an .lmmc address", func(t *testing.T) {
-		svc, game, rs := newLatestRevisionService(t, &domain.CollectionOrigin{ImportURL: "https://example.com/night.lmmc"}, 4)
+		svc, game, rs := newLatestRevisionService(t, &domain.CollectionOrigin{ImportURL: "http://example.com/night.lmmc"}, 4) // plain http: lmm never fetches it
 		got := skipReport(t, svc, game).CollectionRevision
 		require.NotNil(t, got)
 		assert.Equal(t, core.CollectionOriginURL, got.Origin)

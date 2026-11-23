@@ -52,16 +52,26 @@ type CollectionOrigin struct {
 	// address may need in order to answer, so lmm shows it only through
 	// RedactURL. Empty for a collection imported from a file or a source.
 	ImportURL string `yaml:"import_url,omitempty" json:"import_url,omitempty"`
+	// ETag and LastModified are the HTTP validators the address answered
+	// the import (or the last collection update) with (#674): the update
+	// check sends them back in a conditional GET, so a 304 says the
+	// collection is unchanged without downloading it. Like ImportURL they
+	// are this machine's record - never read from a document, never
+	// exported, and dropped with the address (WithoutImportURL). Empty
+	// when the server sent none, or the profile was imported before #674.
+	ETag         string `yaml:"etag,omitempty" json:"etag,omitempty"`
+	LastModified string `yaml:"last_modified,omitempty" json:"last_modified,omitempty"`
 }
 
-// WithoutImportURL is o without its ImportURL - the origin a document
-// carries - or nil when nothing else is left.
+// WithoutImportURL is o without its ImportURL and the address's
+// validators (#674) - the origin a document carries - or nil when nothing
+// else is left.
 func (o *CollectionOrigin) WithoutImportURL() *CollectionOrigin {
 	if o == nil {
 		return nil
 	}
 	out := *o
-	out.ImportURL = ""
+	out.ImportURL, out.ETag, out.LastModified = "", "", ""
 	if out.IsZero() {
 		return nil
 	}

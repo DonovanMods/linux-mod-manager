@@ -666,6 +666,11 @@ func TestJSONGoldens(t *testing.T) {
 			domain.CollectionOrigin{Author: "curator", ImportURL: "https://example.invalid/shared/coop.lmmc"},
 		},
 		{
+			// #674: with the address's HTTP validators.
+			"collection_origin_import_url_validators",
+			domain.CollectionOrigin{ImportURL: "https://example.invalid/shared/coop.lmmc", ETag: `W/"5f2b-1a"`, LastModified: "Sun, 22 Nov 2026 10:00:00 GMT"},
+		},
+		{
 			"collection_external_item",
 			domain.CollectionExternalItem{Name: "Tool", URL: "https://example.invalid/tool", Instructions: "Install it by hand."},
 		},
