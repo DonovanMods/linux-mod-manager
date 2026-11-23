@@ -286,3 +286,18 @@ func fileGone(err error) bool {
 	var status *httpStatusError
 	return errors.As(err, &status) && (status.code == http.StatusNotFound || status.code == http.StatusGone)
 }
+
+// storesFileLists reports whether sourceID's lists for game can come from
+// the store - the only case a gone download is worth a fresh list: any
+// other source's list was already the source's own.
+func (s *Service) storesFileLists(sourceID string, game *domain.Game) bool {
+	if game == nil || s.db == nil {
+		return false
+	}
+	src, err := s.sourceByID(sourceID)
+	if err != nil {
+		return false
+	}
+	_, tracked := src.(source.ChangeTracker)
+	return tracked
+}

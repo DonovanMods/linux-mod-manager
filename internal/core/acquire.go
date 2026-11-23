@@ -198,7 +198,7 @@ func (a *acquiredFile) claimTree() error {
 // stored list.
 func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, sourceID string, game *domain.Game, mod *domain.Mod, file *domain.DownloadableFile, fx fomodInput, sink EventSink) (*acquiredFile, error) {
 	a, err := s.acquireFileOnce(ctx, gameCache, sourceID, game, mod, file, fx, sink)
-	if err == nil || !fileGone(err) || freshFileLists(ctx) {
+	if err == nil || !fileGone(err) || freshFileLists(ctx) || !s.storesFileLists(sourceID, game) {
 		return a, err
 	}
 	fresh := withFreshFileLists(ctx)
