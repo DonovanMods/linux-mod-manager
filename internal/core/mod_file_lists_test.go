@@ -309,3 +309,35 @@ func TestProfileApply_ASecondInstallOfAnUnchangedModFetchesNoList(t *testing.T) 
 	}
 	assert.Equal(t, 1, src.fetchCount(), "the second apply re-used the vouched list")
 }
+
+// TestGetModFiles_ConcurrentReadsShareOneAnswer: `lmm serve` reads lists
+// from many requests at once. Run under -race; the reads agree, and the
+// change signal is asked once for them all.
+func TestGetModFiles_ConcurrentReadsShareOneAnswer(t *testing.T) {
+	svc, game, src := newListingService(t)
+	ctx := context.Background()
+	_, err := svc.GetModFiles(ctx, game, "lsrc", listMod())
+	require.NoError(t, err)
+	ageStoredLists(t, svc)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for range 16 {
+		wg.Go(func() {
+			files, err := svc.GetModFiles(ctx, game, "lsrc", listMod())
+			if err == nil && len(files) != 1 {
+				err = assert.AnError
+			}
+			errs <- err
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	assert.Equal(t, 1, src.fetchCount(), "every read answered from the store")
+	src.mu.Lock()
+	defer src.mu.Unlock()
+	assert.Equal(t, 1, src.vouches, "one change-signal answer for all of them")
+}
