@@ -1127,7 +1127,7 @@ func (s *Service) redeployFromSource(ctx context.Context, game *domain.Game, mod
 	}
 	// #676 review: a version a stored list lacks is looked for once in the
 	// source's own.
-	files, sel, err := reselectFresh(ctx, s, game, mod.SourceID, fetchedMod, mod.FileIDs, files, stored, func(fs []domain.DownloadableFile) (storedSelection, error) {
+	_, sel, err := reselectFresh(ctx, s, game, mod.SourceID, fetchedMod, mod.FileIDs, files, stored, func(fs []domain.DownloadableFile) (storedSelection, error) {
 		return selectStoredFiles(fs, mod.FileIDs, mod.Version, fromCollection, mod.Version)
 	})
 	if err != nil {

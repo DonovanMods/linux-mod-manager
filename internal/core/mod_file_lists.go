@@ -156,7 +156,7 @@ func (s *Service) modFilesFrom(ctx context.Context, game *domain.Game, sourceID 
 // that was already the source's own is not asked for again.
 func reselectFresh[T any](ctx context.Context, s *Service, game *domain.Game, sourceID string, mod *domain.Mod, want []string, files []domain.DownloadableFile, stored bool, pick func([]domain.DownloadableFile) (T, error)) ([]domain.DownloadableFile, T, error) {
 	picked, err := pick(files)
-	if err == nil || !stored || !(errors.Is(err, ErrVersionNotFound) || errors.Is(err, ErrStoredFilesUnavailable)) {
+	if err == nil || !stored || (!errors.Is(err, ErrVersionNotFound) && !errors.Is(err, ErrStoredFilesUnavailable)) {
 		return files, picked, err
 	}
 	fresh, ferr := s.modFilesWanting(withFreshFileLists(ctx), game, sourceID, mod, want)

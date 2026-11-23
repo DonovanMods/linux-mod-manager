@@ -138,7 +138,7 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	// #662: stored ids whose main files mix versions heal to one (a
 	// collection's are installed as they are; its import plan's
 	// conversion said so).
-	files, sel, err := reselectFresh(ctx, s, game, ref.SourceID, mod, ref.FileIDs, files, fromStore, func(fs []domain.DownloadableFile) (storedSelection, error) {
+	_, sel, err := reselectFresh(ctx, s, game, ref.SourceID, mod, ref.FileIDs, files, fromStore, func(fs []domain.DownloadableFile) (storedSelection, error) {
 		return selectStoredFiles(fs, fileIDsToUse, ref.Version, ref.FromCollection, mod.Version)
 	}) // #676 review
 	if err != nil {

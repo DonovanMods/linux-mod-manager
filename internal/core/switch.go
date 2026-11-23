@@ -1027,7 +1027,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 
 			// #662: stored ids whose main files mix versions heal to one
 			// (a collection's are installed as they are), as the plan said.
-			files, sel, err := reselectFresh(ctx, s, game, ref.SourceID, mod, ref.FileIDs, files, stored, func(fs []domain.DownloadableFile) (storedSelection, error) {
+			_, sel, err := reselectFresh(ctx, s, game, ref.SourceID, mod, ref.FileIDs, files, stored, func(fs []domain.DownloadableFile) (storedSelection, error) {
 				return selectStoredFiles(fs, ref.FileIDs, ref.Version, ref.FromCollection, mod.Version)
 			}) // #676 review
 			if err != nil {
