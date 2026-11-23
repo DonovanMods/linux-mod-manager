@@ -367,14 +367,17 @@ func (s *Service) newPinChecker(game *domain.Game, conv *ConvertedCollection) *p
 }
 
 // listing is modID's listing, fetched on first use.
-func (pc *pinChecker) listing(ctx context.Context, modID string) *pinListing {
+//
+// want is the pinned file IDs being checked (#676): a stored list that
+// lacks one is fetched again rather than taken as proof the pin is gone.
+func (pc *pinChecker) listing(ctx context.Context, modID string, want []string) *pinListing {
 	key := domain.ModKey(pc.conv.SourceID, modID)
 	if l, ok := pc.listings[key]; ok {
 		return l
 	}
 	l := &pinListing{}
 	mod := &domain.Mod{ID: modID, SourceID: pc.conv.SourceID, GameID: pc.game.SourceIDs[pc.conv.SourceID]}
-	files, err := pc.s.GetModFiles(ctx, pc.game, pc.conv.SourceID, mod)
+	files, err := pc.s.modFilesWanting(ctx, pc.game, pc.conv.SourceID, mod, want)
 	switch {
 	case err == nil:
 		l.files = files
@@ -431,7 +434,7 @@ func (pc *pinChecker) check(ctx context.Context, item domain.CollectionItem) (*C
 	if !unvouched {
 		return nil, nil
 	}
-	l := pc.listing(ctx, ref.ModID)
+	l := pc.listing(ctx, ref.ModID, ref.FileIDs)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

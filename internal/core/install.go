@@ -1248,7 +1248,7 @@ func (s *Service) resolveInstallTargetVersion(ctx context.Context, plan *Install
 	}
 
 	primary := plan.Mod // local, addressable copy - distinct from plan.Mod
-	pool, err := s.resolveInstallCandidatePool(ctx, s.gameOrNil(plan.GameID), primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
+	pool, err := s.resolveInstallCandidatePool(ctx, s.gameOrNil(plan.GameID), primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion, opts.TargetFileIDs)
 	if err != nil {
 		return "", false
 	}
@@ -1271,12 +1271,20 @@ func (s *Service) resolveInstallTargetVersion(ctx context.Context, plan *Install
 // by ApplyInstall's up-front primary resolution on both paths (#140) and the
 // #143 lock gate's dry-run derivation, so the gate can never judge a
 // different selection than the install performs.
-func (s *Service) resolveInstallCandidatePool(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod, showArchived bool, targetVersion string) ([]domain.DownloadableFile, error) {
-	files, err := s.GetModFiles(ctx, game, sourceID, mod)
+//
+// want is the file IDs the install pins (#676): a stored list that lacks
+// one is fetched again, and so is one in which targetVersion does not
+// resolve, before either is an error.
+func (s *Service) resolveInstallCandidatePool(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod, showArchived bool, targetVersion string, want []string) ([]domain.DownloadableFile, error) {
+	files, err := s.modFilesWanting(ctx, game, sourceID, mod, want)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get mod files: %w", err)
 	}
-	return installCandidatePool(sourceID, files, showArchived, targetVersion)
+	pool, err := installCandidatePool(sourceID, files, showArchived, targetVersion)
+	if err != nil && targetVersion != "" && !freshFileLists(ctx) {
+		return s.resolveInstallCandidatePool(withFreshFileLists(ctx), game, sourceID, mod, showArchived, targetVersion, want)
+	}
+	return pool, err
 }
 
 // installCandidatePool narrows a mod's listed files to the ones an install
@@ -1400,7 +1408,7 @@ func (s *Service) resolveStrictInstallFiles(ctx context.Context, plan *InstallPl
 		return nil, nil
 	}
 	primary := plan.Mod // local, addressable copy - distinct from plan.Mod
-	pool, err := s.resolveInstallCandidatePool(ctx, s.gameOrNil(plan.GameID), plan.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
+	pool, err := s.resolveInstallCandidatePool(ctx, s.gameOrNil(plan.GameID), plan.SourceID, &primary, plan.ShowArchived, opts.TargetVersion, opts.TargetFileIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -1547,7 +1555,7 @@ func (s *Service) applyInstall(ctx context.Context, game *domain.Game, plan *Ins
 	var primaryOverrideFiles []domain.DownloadableFile
 	if len(plan.Dependencies) > 0 && (opts.TargetVersion != "" || len(opts.TargetFileIDs) > 0) {
 		primary := plan.Mod // local, addressable copy - distinct from plan.Mod
-		pool, err := s.resolveInstallCandidatePool(ctx, game, primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion)
+		pool, err := s.resolveInstallCandidatePool(ctx, game, primary.SourceID, &primary, plan.ShowArchived, opts.TargetVersion, opts.TargetFileIDs)
 		if err != nil {
 			return result, err
 		}

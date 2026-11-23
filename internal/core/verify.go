@@ -973,6 +973,10 @@ func (s *Service) deferredVerify(gameID, profile string, opts VerifyOptions) *Ve
 // sweep.
 func (s *Service) verify(ctx context.Context, game *domain.Game, profile string, opts VerifyOptions, sink EventSink) (*VerifyResult, error) {
 	result := &VerifyResult{CheckedAt: time.Now().UTC()}
+	if opts.Refresh {
+		// #676: an explicit refresh asks every source for its file lists.
+		ctx = withFreshFileLists(ctx)
+	}
 	r := &verifyRun{ctx: ctx, svc: s, game: game, profile: profile, opts: opts, sink: sink, result: result}
 
 	files, err := s.GetFilesWithChecksums(ctx, game.ID, profile)
@@ -2139,7 +2143,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 			continue
 		}
 
-		sourceFiles, err := r.svc.GetModFiles(r.ctx, r.game, mod.SourceID, SourceMappedMod(r.game, &mod.Mod))
+		sourceFiles, err := r.svc.modFilesWanting(r.ctx, r.game, mod.SourceID, SourceMappedMod(r.game, &mod.Mod), mod.FileIDs) // #676
 		if err != nil && errors.Is(err, domain.ErrModNotFound) {
 			// #590: the typed condition #539 reports, not a check that
 			// could not run - said as such, with the likely new ID.

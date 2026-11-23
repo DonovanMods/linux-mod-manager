@@ -1124,6 +1124,31 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
 
 ### Changed
 
+- **A mod's file list is reused across deploys, switches, applies and
+  installs while the mod is unchanged (#676).** Every flow that needed a
+  mod's files used to ask the source again, so a switch or apply of a
+  353-mod collection could send hundreds of NexusMods requests for mods
+  whose versions had not moved. lmm now keeps the last file list a source
+  gave for each mod. It answers from it while the source's change signal
+  (NexusMods' `updated.json`, #672) vouches the mod unchanged since, and
+  otherwise fetches and replaces it. One change-signal answer per game
+  serves a whole flow.
+  - A stale list never picks the wrong file:
+    - A flow that knows which file IDs it needs (a deploy's or switch's
+      recorded files, a collection's pins, an install's `--file`) fetches
+      the list again when one is missing.
+    - A version pin that does not resolve does the same.
+    - An update fetches its new version's files fresh, and so do the
+      archive-matching flows.
+    - A mod its source no longer has, or a file a download finds gone
+      (HTTP 404/410), drops the stored list.
+  - `lmm verify --refresh` and the web UI's Re-verify ask every source
+    again.
+  - Sources without a change signal are asked every time, as before.
+  - The store is a database table (migration 30, `mod_file_lists`), kept
+    per source, game and mod. It is bounded: lists for mods no profile has
+    go after an hour, any list after 30 days, and the oldest past 5,000.
+
 - **An update check and a verify fetch a mod's file list only when the mod
   has changed (#672).** Every check used to ask NexusMods for each mod's
   details and its file list, two requests per mod, every time. lmm now

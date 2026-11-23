@@ -45,6 +45,12 @@ The check says how many it answered that way, for example "340 mods
 unchanged since the last check, not asked again". **Check for updates**,
 and `lmm update --refresh`, ask about every mod.
 
+The same goes for each mod's list of files. A deploy, a profile switch or
+apply, or an install uses the list lmm already has for a mod that hasn't
+changed, instead of downloading it again. If that list lacks a file lmm
+needs, lmm fetches it again before going on. **Re-verify** and
+`lmm verify --refresh` ask for every list again.
+
 In the terminal:
 
 ```bash

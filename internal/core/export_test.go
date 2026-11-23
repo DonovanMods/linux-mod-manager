@@ -566,3 +566,11 @@ func (s *Service) SetRefBatchItemsForTest(n int) {
 func (s *Service) ProfileSavesForTest() int64 {
 	return s.profileSaves.Load()
 }
+
+// ForgetFileListVouchesForTest drops the file-list store's in-memory
+// change-signal answers (#676), so a test's next read asks the source.
+func ForgetFileListVouchesForTest(s *Service) {
+	s.fileLists.mu.Lock()
+	defer s.fileLists.mu.Unlock()
+	s.fileLists.vouches = nil
+}

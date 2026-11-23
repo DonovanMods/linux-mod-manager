@@ -112,7 +112,7 @@ func (s *Service) acquireImportItem(ctx context.Context, game *domain.Game, plan
 	}
 	st.scope.ModName = mod.Name
 
-	files, err := s.GetModFiles(ctx, game, ref.SourceID, mod)
+	files, err := s.modFilesWanting(ctx, game, ref.SourceID, mod, ref.FileIDs) // #676
 	if supplied != nil {
 		files, err = suppliedFiles(files, err, ref, supplied)
 	}

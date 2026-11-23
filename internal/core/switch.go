@@ -1015,7 +1015,7 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 			scope.ModName = mod.Name
 			failed.Name = mod.Name
 
-			files, err := s.GetModFiles(ctx, game, ref.SourceID, mod)
+			files, err := s.modFilesWanting(ctx, game, ref.SourceID, mod, ref.FileIDs) // #676
 			if err != nil {
 				fail(fmt.Sprintf("failed to get files: %v", err))
 				continue

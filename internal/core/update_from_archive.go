@@ -362,8 +362,8 @@ func (s *Service) identifyUpdateArchive(ctx context.Context, game *domain.Game, 
 		return
 	}
 	plan.sourceManualOnly = srcMod.ManualOnly
-	plan.sourceDistributable = explicitlyDistributable(srcMod) // #627
-	files, err := s.GetModFiles(ctx, game, mod.SourceID, srcMod)
+	plan.sourceDistributable = explicitlyDistributable(srcMod)                       // #627
+	files, err := s.GetModFiles(withFreshFileLists(ctx), game, mod.SourceID, srcMod) // #676: matched against a file in hand - the source's own list
 	if err != nil {
 		warn("could not fetch %s's files from %s: %v", mod.Name, mod.SourceID, err)
 		return

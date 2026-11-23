@@ -119,10 +119,13 @@ type DownloadModResult struct {
 // serialized through this semaphore; Phase 2 lifts those flows into
 // serialized Service methods.
 type Service struct {
-	config   *config.Config
-	db       *db.DB
-	cache    *cache.Cache
-	registry *source.Registry
+	config *config.Config
+	db     *db.DB
+	// fileLists is the file-list store's in-memory half (#676,
+	// mod_file_lists.go).
+	fileLists fileListState
+	cache     *cache.Cache
+	registry  *source.Registry
 	// adapters is the game-adapter registry (#353). Never nil: NewService
 	// substitutes adapter.NewRegistry() for a nil ServiceConfig.Adapters,
 	// so AdapterFor always has at least the built-in identity to resolve.
@@ -1593,14 +1596,13 @@ func (s *Service) GetMod(ctx context.Context, sourceID, gameID, modID string) (*
 // configured game the files are for, nil for none: a source may offer a game
 // only the files it accepts (source.WithGame, #544), so a frontend listing
 // files to choose from passes the game it will install into.
+//
+// #676: for a source with a change signal, the list is answered from the
+// last one it gave while the source vouches the mod unchanged since
+// (mod_file_lists.go); modFilesWanting is the same for a flow that knows
+// which file IDs it needs.
 func (s *Service) GetModFiles(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod) ([]domain.DownloadableFile, error) {
-	src, err := s.sourceByID(sourceID)
-	if err != nil {
-		return nil, err
-	}
-
-	files, err := src.GetModFiles(source.WithGame(ctx, game), mod)
-	return sanitizeSourceFiles(files), err // #594
+	return s.modFilesWanting(ctx, game, sourceID, mod, nil)
 }
 
 // gameOrNil is the configured game id names, nil when there is none.
@@ -1614,12 +1616,19 @@ func (s *Service) gameOrNil(id string) *domain.Game {
 // ResolveModVersion fetches mod's raw file list from sourceID and resolves
 // version against it via ResolveVersionFiles (#96). The list is deliberately
 // unfiltered - archived files are exactly what a version pin usually names.
+//
+// #676: a version that does not resolve in a stored list is looked for
+// once more in the source's own, before it is an error.
 func (s *Service) ResolveModVersion(ctx context.Context, game *domain.Game, sourceID string, mod *domain.Mod, version string) ([]domain.DownloadableFile, error) {
 	files, err := s.GetModFiles(ctx, game, sourceID, mod)
 	if err != nil {
 		return nil, fmt.Errorf("listing files for version resolution: %w", err)
 	}
-	return ResolveVersionFiles(sourceID, files, version)
+	resolved, err := ResolveVersionFiles(sourceID, files, version)
+	if err != nil && !freshFileLists(ctx) {
+		return s.ResolveModVersion(withFreshFileLists(ctx), game, sourceID, mod, version)
+	}
+	return resolved, err
 }
 
 // ErrSourceVersionsUnsupported is source.ErrNotSupported, re-exported so a

@@ -210,6 +210,9 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		// fails here instead of quietly taking a different route.
 		fetcher, isFetcher := src.(source.Fetcher)
 		if !isFetcher || !errors.Is(err, source.ErrNotSupported) {
+			// #676: the file list that offered this file may be a stored
+			// one the source has moved past: the next attempt asks again.
+			s.forgetModFiles(ctx, game, sourceID, mod.ID)
 			return nil, fmt.Errorf("getting download URL: %w", err)
 		}
 		a, err := s.acquireFetched(ctx, gameCache, fetcher, sourceID, game, mod, file, fx, sink)
@@ -282,6 +285,10 @@ func (s *Service) acquireFileRaw(ctx context.Context, gameCache *cache.Cache, so
 		}
 		downloadResult, err = s.downloader.DownloadWithHeaders(ctx, url, archivePath, headers, sink)
 		if err != nil {
+			if fileGone(err) {
+				// #676: as above - a file the host no longer has.
+				s.forgetModFiles(ctx, game, sourceID, mod.ID)
+			}
 			return nil, fmt.Errorf("downloading mod: %w", err)
 		}
 	} else {

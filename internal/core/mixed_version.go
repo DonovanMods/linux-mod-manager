@@ -471,7 +471,7 @@ func (s *Service) previewStoredFiles(ctx context.Context, game *domain.Game, ref
 		if err != nil {
 			continue
 		}
-		files, err := s.GetModFiles(ctx, game, ref.SourceID, mod)
+		files, err := s.modFilesWanting(ctx, game, ref.SourceID, mod, ref.FileIDs) // #676
 		if err != nil {
 			continue
 		}
