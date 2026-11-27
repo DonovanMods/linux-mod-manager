@@ -16,8 +16,9 @@ go back to.
 For each mod, the cache keeps:
 
 1. every **installed** version: the one any of the game's profiles has;
-2. the **3 newest other versions**, newest first. This is the
-   `cache.keep_previous_versions` setting, so 3 is only the default;
+2. the **3 newest other versions**, newest meaning the ones lmm cached
+   most recently. This is the `cache.keep_previous_versions` setting, so 3
+   is only the default;
 3. on top of those, every older version something still needs:
    - the version a mod would roll back to (`lmm update rollback`);
    - a version a profile is locked or pinned to, or a collection pins;
@@ -34,6 +35,27 @@ needs it.
 When lmm can't read something that might need a version (a profile, a
 snapshot), it removes nothing from that game's cache and tells you why.
 To let go of versions that only an old snapshot needs, delete the snapshot.
+
+If several games share one cache folder (their `cache_path` points to the
+same place), lmm keeps what any of them needs. So does a game you removed
+from lmm whose records are still there.
+
+## Mods you no longer have installed
+
+A mod that no profile has installed and no profile or snapshot mentions,
+such as one you uninstalled while keeping its cache, is **left alone**.
+lmm doesn't decide for you that you're done with it.
+
+**Setup → Storage** and `lmm cache` list these mods as **not installed
+anywhere**, with the space they take. To remove them as well, tick **Also
+remove mods not installed anywhere** in the prune preview, or run:
+
+```bash
+lmm cache prune --include-uninstalled --dry-run
+lmm cache prune --include-uninstalled
+```
+
+That removes every cached version of each of those mods.
 
 ## When lmm cleans up
 

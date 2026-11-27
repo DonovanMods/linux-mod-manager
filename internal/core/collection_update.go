@@ -1332,15 +1332,18 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 			result.Warnings = append(result.Warnings, w)
 		}
 	}
-	// #678: the changed members' old versions go. Never fatal; what a
-	// member that did not change keeps is its own installed row's.
-	var changed []domain.ModReference
-	for _, it := range plan.Changed {
-		changed = append(changed, domain.ModReference{SourceID: it.SourceID, ModID: it.ModID})
+	// #678: the changed members' old versions go - only after an update
+	// that succeeded: one whose import failed, was left incomplete or was
+	// cancelled prunes nothing. Never fatal.
+	if err == nil && ctx.Err() == nil {
+		var changed []domain.ModReference
+		for _, it := range plan.Changed {
+			changed = append(changed, domain.ModReference{SourceID: it.SourceID, ModID: it.ModID})
+		}
+		pruned, pruneWarnings := s.pruneAfterFlow(ctx, game, changed, Scope{Op: OpImport}, sink)
+		result.CachePruned = pruned
+		result.Warnings = append(result.Warnings, pruneWarnings...)
 	}
-	pruned, pruneWarnings := s.pruneAfterFlow(ctx, game, changed, Scope{Op: OpImport}, sink)
-	result.CachePruned = pruned
-	result.Warnings = append(result.Warnings, pruneWarnings...)
 	return result, err
 }
 

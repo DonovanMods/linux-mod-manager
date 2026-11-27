@@ -451,6 +451,10 @@ func TestGameVersionRows(t *testing.T) {
 	save("sky", "default", "other", "3.0")
 	require.NoError(t, database.UpdateModVersion(ctx, "local", "k", "sky", "p", "2.0", "abcdef123456"))
 
+	ids, err := database.InstalledGameIDs(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sky", "sky2"}, ids)
+
 	rows, err := database.GameVersionRows(ctx, "sky")
 	require.NoError(t, err)
 	assert.Equal(t, []db.GameVersionRow{

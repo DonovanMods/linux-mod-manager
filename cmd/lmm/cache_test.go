@@ -60,10 +60,10 @@ func setupCacheTest(t *testing.T) (*core.Service, *domain.Game, string) {
 		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
 	}))
 
-	oldDry, oldYes, oldJSON, oldVerbose, oldGame := cachePruneDryRun, cachePruneYes, jsonOutput, verbose, gameID
-	cachePruneDryRun, cachePruneYes, jsonOutput, verbose, gameID = false, true, false, false, ""
+	oldDry, oldYes, oldJSON, oldVerbose, oldGame, oldUninst := cachePruneDryRun, cachePruneYes, jsonOutput, verbose, gameID, cachePruneUninstalled
+	cachePruneDryRun, cachePruneYes, jsonOutput, verbose, gameID, cachePruneUninstalled = false, true, false, false, "", false
 	t.Cleanup(func() {
-		cachePruneDryRun, cachePruneYes, jsonOutput, verbose, gameID = oldDry, oldYes, oldJSON, oldVerbose, oldGame
+		cachePruneDryRun, cachePruneYes, jsonOutput, verbose, gameID, cachePruneUninstalled = oldDry, oldYes, oldJSON, oldVerbose, oldGame, oldUninst
 	})
 	return svc, game, cacheDir
 }
@@ -180,4 +180,30 @@ func TestJSONGolden_Cache(t *testing.T) {
 		out := captureStdout(t, func() error { return doCacheKeep(context.Background(), svc, []string{"5"}) })
 		assertJSONCLIGolden(t, "cache_keep", out)
 	})
+}
+
+// TestCachePrune_UninstalledModsNeedTheFlag (#678 review S5): a mod nothing
+// references is listed by status, kept by a prune, and removed only with
+// --include-uninstalled.
+func TestCachePrune_UninstalledModsNeedTheFlag(t *testing.T) {
+	svc, game, _ := setupCacheTest(t)
+	c := svc.GetGameCache(game)
+	k := cache.Key{GameID: game.ID, SourceID: "src", ModID: "gone", Version: "1.0"}
+	require.NoError(t, c.Store(k, "gone.esp", []byte("gone")))
+	require.NoError(t, cache.MarkFileComplete(c.ModPath(k), "f"))
+	require.NoError(t, cache.StampKey(c.ModPath(k), k))
+	ctx := context.Background()
+
+	out := captureStdout(t, func() error { return doCacheStatus(ctx, svc, nil) })
+	assert.Contains(t, out, "Not installed anywhere in g1")
+	assert.Contains(t, out, "src:gone")
+
+	out = captureStdout(t, func() error { return doCachePrune(ctx, svc, nil) })
+	assert.Contains(t, out, "Kept: 1 mod not installed anywhere")
+	assert.True(t, c.Exists(k))
+
+	cachePruneUninstalled = true
+	out = captureStdout(t, func() error { return doCachePrune(ctx, svc, nil) })
+	assert.Contains(t, out, "not installed anywhere")
+	assert.False(t, c.Exists(k))
 }

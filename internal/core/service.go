@@ -120,12 +120,7 @@ type DownloadModResult struct {
 // serialized Service methods.
 type Service struct {
 	config *config.Config
-	// cacheKeep is cache.keep_previous_versions as the web UI last set it
-	// (#678), once cacheKeepSet: the setting a running server follows
-	// without re-reading config.yaml, which no flow reads past its start.
-	cacheKeep    atomic.Int64
-	cacheKeepSet atomic.Bool
-	db           *db.DB
+	db     *db.DB
 	// fileLists is the file-list store's in-memory half (#676,
 	// mod_file_lists.go).
 	fileLists fileListState
@@ -2017,6 +2012,12 @@ func commitStagedCache(k cache.Key, cachePath, stagePath string) error {
 		return fmt.Errorf("preparing staged cache: %w", err)
 	}
 	if err := cache.StampKey(stagePath, k); err != nil {
+		return err
+	}
+	// #678: the entry's first commit time stands across every later
+	// commit to it, so the cache prune ranks versions by when they were
+	// cached, not by when an entry was last touched.
+	if err := cache.CarryCommitted(stagePath, cachePath, time.Now()); err != nil {
 		return err
 	}
 	parentDir := filepath.Dir(cachePath)

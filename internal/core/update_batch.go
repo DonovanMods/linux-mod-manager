@@ -181,6 +181,13 @@ type UpdateBatchResult struct {
 	// the check's whenever an update remains, and the record the check
 	// cleared is gone, so nothing would say it otherwise. omitempty.
 	ManualOnlyCleared []ManualOnlyCleared `json:"manual_only_cleared,omitempty"`
+	// CachePruned is what the prune after the batch removed (#678): old
+	// cached versions of the mods it updated, pruned once at its end.
+	// Absent when it removed nothing.
+	CachePruned *CachePruneSummary `json:"cache_pruned,omitempty"`
+	// Warnings are the batch's own warnings, beside each item's: today,
+	// what that prune could not do.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // PlanUpdateBatch computes the batch plan for selection in profileName: it
@@ -404,10 +411,20 @@ func (s *Service) applyUpdateBatch(ctx context.Context, game *domain.Game, plan 
 		},
 		release: func(*updateBatchStaged, bool) {},
 	}
-	if err := runAcquire(ctx, run); err != nil {
-		return result, err
+	err := runAcquire(ctx, run)
+	// #678: one prune for every mod the batch updated, after the last of
+	// them - whatever stopped the batch, the ones applied are applied. A
+	// cancelled batch prunes nothing.
+	if ctx.Err() == nil {
+		var updated []domain.ModReference
+		for _, a := range result.Applied {
+			updated = append(updated, domain.ModReference{SourceID: a.Mod.SourceID, ModID: a.Mod.ModID})
+		}
+		pruned, warnings := s.pruneAfterFlow(ctx, game, updated, Scope{Op: OpUpdate}, sink)
+		result.CachePruned = pruned
+		result.Warnings = append(result.Warnings, warnings...)
 	}
-	return result, nil
+	return result, err
 }
 
 // updateBatchStaged is one batch item between its re-plan and its apply.
@@ -520,7 +537,7 @@ func (s *Service) commitUpdateBatchItem(ctx context.Context, game *domain.Game, 
 		applied, err = s.applyMergedPakRegen(ctx, game, plan.Profile, sink)
 	} else {
 		applied, err = s.applyUpdate(ctx, game, st.itemPlan,
-			UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks, Fomod: opts.Fomod}, sink)
+			UpdateOptions{Force: opts.Force, SkipHooks: opts.SkipHooks, Fomod: opts.Fomod, deferPrune: true}, sink)
 	}
 	var question *FomodChoicesRequiredError
 	if err != nil && st.itemPlan != nil && ctx.Err() == nil && errors.As(err, &question) {

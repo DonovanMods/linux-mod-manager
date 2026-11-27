@@ -21,8 +21,8 @@ import (
 )
 
 // pruneFixtureVersions are the versions seedPruneFixture caches for mod
-// "old" of the fixture game, oldest first; none is installed, so the
-// default setting keeps the newest three.
+// "old" of the fixture game, oldest first; the mod is installed at 6.0,
+// so none of them is, and the default setting keeps the newest three.
 var pruneFixtureVersions = []string{"1.0", "2.0", "3.0", "4.0", "5.0"}
 
 // seedPruneFixture caches pruneFixtureVersions for the fixture game.
@@ -39,6 +39,12 @@ func seedPruneFixture(t *testing.T, svc *core.Service, game *domain.Game) {
 		when := at.Add(time.Duration(i) * time.Hour)
 		require.NoError(t, os.Chtimes(dir, when, when))
 	}
+	// Installed at a newer version no longer cached, so the mod is one a
+	// profile uses and none of the five is installed.
+	require.NoError(t, svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "old", SourceID: fixtureSourceID, Name: "Old Mod", Version: "6.0", GameID: game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
+	}))
 }
 
 // prunedFixtureLeft is which pruneFixtureVersions are still cached.
@@ -121,7 +127,7 @@ func TestAPICache_StatusAndSetting(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
 	assert.Equal(t, 1, status.KeepPreviousVersions)
 	assert.Equal(t, 4, status.ReclaimableVersions)
-	assert.Equal(t, 1, svc.CacheKeepPreviousVersions())
+	assert.Equal(t, 1, keepOf(t, svc))
 
 	rec = doAPI(s, http.MethodPut, "/api/v1/settings/cache", `{"keep_previous_versions":-1}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -133,5 +139,13 @@ func TestAPICache_StatusAndSetting(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	rec = doAPIWithoutCSRF(s, http.MethodPut, "/api/v1/settings/cache", `{"keep_previous_versions":2}`)
 	assert.Equal(t, http.StatusForbidden, rec.Code)
-	assert.Equal(t, -1, svc.CacheKeepPreviousVersions(), "a request without the CSRF token changes nothing")
+	assert.Equal(t, -1, keepOf(t, svc), "a request without the CSRF token changes nothing")
+}
+
+// keepOf is the setting svc reads now.
+func keepOf(t *testing.T, svc *core.Service) int {
+	t.Helper()
+	n, err := svc.CacheKeepPreviousVersions()
+	require.NoError(t, err)
+	return n
 }

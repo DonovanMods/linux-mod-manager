@@ -7,7 +7,9 @@
 // the mutation slot and refuses a stale plan, so nothing is rebuilt here.
 //
 // The scope is the SELECTED game, or every game when the body says
-// all_games - `lmm cache prune` with and without --game.
+// all_games - `lmm cache prune` with and without --game. The mods nothing
+// references are left whole unless the body says include_uninstalled (the
+// preview's checkbox, which re-plans).
 package serve
 
 import (
@@ -34,6 +36,10 @@ type cachePrunePlanRequest struct {
 	// AllGames prunes every configured game's cache, as `lmm cache prune`
 	// without --game does.
 	AllGames bool `json:"all_games,omitzero"`
+	// IncludeUninstalled also removes every version of the mods nothing
+	// references, as `lmm cache prune --include-uninstalled` does: the
+	// preview's checkbox, off by default.
+	IncludeUninstalled bool `json:"include_uninstalled,omitzero"`
 }
 
 // cachePruneApplyRequest is the job's options: a prune has none.
@@ -49,7 +55,7 @@ func planCachePruneKind(ctx context.Context, s *Server, sel selection, opts any)
 	if !req.AllGames {
 		games = []*domain.Game{sel.Game}
 	}
-	plan, err := s.svc.PlanCachePrune(ctx, games)
+	plan, err := s.svc.PlanCachePrune(ctx, games, core.CachePruneOptions{IncludeUninstalled: req.IncludeUninstalled})
 	if err != nil {
 		return nil, nil, err
 	}

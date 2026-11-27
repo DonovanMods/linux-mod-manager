@@ -27,6 +27,12 @@ negative count) never prunes. Delete a snapshot to let go of the versions
 only it references.
 
 .PP
+A mod nothing references at all - not installed in any profile, named by
+no profile or snapshot, such as one uninstalled with --keep-cache - is left
+whole. 'lmm cache status' lists those as not installed anywhere, and only
+\&'lmm cache prune --include-uninstalled' removes them.
+
+.PP
 Without --game it prunes every game's cache. A game whose profiles,
 installed records or snapshots lmm cannot read is left whole, and the
 command says why: lmm never prunes a version it cannot tell is unused.
@@ -37,9 +43,15 @@ frees, without removing anything or prompting. Under --json without
 --dry-run, pass --yes: a prompt cannot be answered.
 
 .PP
+--include-uninstalled also removes every cached version of each mod
+nothing references (listed by 'lmm cache status' as not installed
+anywhere).
+
+.PP
 Examples:
   lmm cache prune --dry-run
   lmm cache prune --game skyrim-se
+  lmm cache prune --include-uninstalled --dry-run
   lmm cache prune --yes --json
 
 
@@ -50,6 +62,10 @@ Examples:
 .PP
 \fB-h\fP, \fB--help\fP[=false]
 	help for prune
+
+.PP
+\fB--include-uninstalled\fP[=false]
+	also remove every cached version of the mods nothing references (not installed anywhere)
 
 .PP
 \fB-y\fP, \fB--yes\fP[=false]

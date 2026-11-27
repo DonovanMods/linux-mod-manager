@@ -404,7 +404,7 @@ func TestServeJSONGoldens(t *testing.T) {
 		{
 			// POST /api/v1/plans/cache_prune's body (#678).
 			"cache_prune_plan_request",
-			cachePrunePlanRequest{AllGames: true},
+			cachePrunePlanRequest{AllGames: true, IncludeUninstalled: true},
 		},
 		{
 			"job_start_response",

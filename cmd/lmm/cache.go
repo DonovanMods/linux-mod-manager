@@ -19,8 +19,9 @@ import (
 )
 
 var (
-	cachePruneDryRun bool
-	cachePruneYes    bool
+	cachePruneDryRun      bool
+	cachePruneYes         bool
+	cachePruneUninstalled bool
 )
 
 // cacheKeepRule is the keep rule, as every cache command words it.
@@ -34,7 +35,12 @@ updates v1 to v5, the default keeps v5 (installed) and v4, v3 and v2.
 
 0 keeps only the installed (and referenced) versions; unlimited (or a
 negative count) never prunes. Delete a snapshot to let go of the versions
-only it references.`
+only it references.
+
+A mod nothing references at all - not installed in any profile, named by
+no profile or snapshot, such as one uninstalled with --keep-cache - is left
+whole. 'lmm cache status' lists those as not installed anywhere, and only
+'lmm cache prune --include-uninstalled' removes them.`
 
 var cacheCmd = &cobra.Command{
 	Use:   "cache",
@@ -91,9 +97,14 @@ command says why: lmm never prunes a version it cannot tell is unused.
 frees, without removing anything or prompting. Under --json without
 --dry-run, pass --yes: a prompt cannot be answered.
 
+--include-uninstalled also removes every cached version of each mod
+nothing references (listed by 'lmm cache status' as not installed
+anywhere).
+
 Examples:
   lmm cache prune --dry-run
   lmm cache prune --game skyrim-se
+  lmm cache prune --include-uninstalled --dry-run
   lmm cache prune --yes --json`,
 	Args: cobra.NoArgs,
 	RunE: runCachePrune,
@@ -121,6 +132,7 @@ Examples:
 func init() {
 	cachePruneCmd.Flags().BoolVar(&cachePruneDryRun, "dry-run", false, "list what would be removed without removing anything")
 	cachePruneCmd.Flags().BoolVarP(&cachePruneYes, "yes", "y", false, "skip the confirmation prompt")
+	cachePruneCmd.Flags().BoolVar(&cachePruneUninstalled, "include-uninstalled", false, "also remove every cached version of the mods nothing references (not installed anywhere)")
 	cacheCmd.AddCommand(cacheStatusCmd, cachePruneCmd, cacheKeepCmd)
 	rootCmd.AddCommand(cacheCmd)
 }
@@ -200,6 +212,7 @@ func renderCacheStatus(status *core.CacheStatus) {
 	}
 	fmt.Println(".")
 	fmt.Println(keepRuleLine(status.KeepPreviousVersions))
+	renderUninstalled(status.Games)
 	for _, g := range status.Games {
 		if g.Skipped != "" {
 			fmt.Fprintf(os.Stderr, "Warning: %s's cache would not be pruned: %s\n", g.GameID, g.Skipped)
@@ -226,7 +239,7 @@ func runCachePrune(cmd *cobra.Command, _ []string) error {
 }
 
 func doCachePrune(ctx context.Context, svc *core.Service, games []*domain.Game) error {
-	plan, err := svc.PlanCachePrune(ctx, games)
+	plan, err := svc.PlanCachePrune(ctx, games, core.CachePruneOptions{IncludeUninstalled: cachePruneUninstalled})
 	if err != nil {
 		return err
 	}
@@ -248,6 +261,7 @@ func doCachePrune(ctx context.Context, svc *core.Service, games []*domain.Game) 
 		} else {
 			fmt.Println("Nothing to prune.")
 		}
+		printUninstalledKept(plan)
 		return nil
 	}
 	if !jsonOutput {
@@ -315,9 +329,41 @@ func renderCachePrunePlan(plan *core.CachePrunePlan) {
 		if e.Variant != "" {
 			version += " [" + e.Variant + "]"
 		}
+		if e.Uninstalled {
+			version += " (not installed anywhere)"
+		}
 		fmt.Printf("    - %-24s %s\n", domain.SanitizeLine(version), humanBytes(e.Bytes))
 	}
 	fmt.Printf("\nWould free %s (%s).\n", humanBytes(plan.Bytes), countOf(plan.Versions, "old version", "old versions"))
+	printUninstalledKept(plan)
+}
+
+// printUninstalledKept says, for a plan that leaves them whole, how many
+// mods nothing references it keeps and how to remove them too.
+func printUninstalledKept(plan *core.CachePrunePlan) {
+	if plan.IncludeUninstalled || len(plan.Uninstalled) == 0 {
+		return
+	}
+	var bytes int64
+	for _, m := range plan.Uninstalled {
+		bytes += m.Bytes
+	}
+	fmt.Printf("Kept: %s not installed anywhere (%s); --include-uninstalled removes them too.\n",
+		countOf(len(plan.Uninstalled), "mod", "mods"), humanBytes(bytes))
+}
+
+// renderUninstalled lists, under the status table, the mods nothing
+// references, with their size.
+func renderUninstalled(games []core.CacheGameStatus) {
+	for _, g := range games {
+		if len(g.Uninstalled) == 0 {
+			continue
+		}
+		fmt.Printf("\nNot installed anywhere in %s (kept; 'lmm cache prune --include-uninstalled' removes them):\n", domain.SanitizeLine(g.GameID))
+		for _, m := range g.Uninstalled {
+			fmt.Printf("  %s  %s (%s)\n", domain.SanitizeLine(domain.ModKey(m.SourceID, m.ModID)), humanBytes(m.Bytes), countOf(m.Versions, "version", "versions"))
+		}
+	}
 }
 
 // cacheKeepResult is `lmm cache keep --json`'s document: the setting, -1
@@ -342,7 +388,10 @@ func doCacheKeep(ctx context.Context, svc *core.Service, args []string) error {
 			return err
 		}
 	}
-	keep := svc.CacheKeepPreviousVersions()
+	keep, err := svc.CacheKeepPreviousVersions()
+	if err != nil {
+		return err
+	}
 	if jsonOutput {
 		return emitJSON(cacheKeepResult{KeepPreviousVersions: keep})
 	}

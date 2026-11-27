@@ -110,7 +110,7 @@ func TestDiskUsage_CountsEverythingAndSeesNestedEntries(t *testing.T) {
 
 // TestRemoveEntry_TakesTheWholeDirectory: a removed entry is gone at once
 // (moved aside, then deleted), and a leftover of an interrupted removal is
-// swept by the next scan.
+// swept by SweepPruneLeftovers, never by a scan, which only reads.
 func TestRemoveEntry_TakesTheWholeDirectory(t *testing.T) {
 	base := t.TempDir()
 	c := cache.New(base)
@@ -126,5 +126,55 @@ func TestRemoveEntry_TakesTheWholeDirectory(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(leftover, "x"), 0o755))
 	_, err := cache.ScanRoot(c.Root("g"))
 	require.NoError(t, err)
+	assert.DirExists(t, leftover, "a scan only reads")
+	cache.SweepPruneLeftovers(c.Root("g"), nil)
 	assert.NoDirExists(t, leftover)
+}
+
+// TestCommitted_IsWrittenOnceAndCarried (#678): the first commit's time
+// stands - MarkCommitted never rewrites it, a commit to an existing entry
+// carries it, and a copy keeps its source's (or, for an entry from before
+// stamps, the source's modification time).
+func TestCommitted_IsWrittenOnceAndCarried(t *testing.T) {
+	dir := t.TempDir()
+	first := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	_, ok := cache.CommittedAt(dir)
+	assert.False(t, ok)
+	require.NoError(t, cache.MarkCommitted(dir, first))
+	require.NoError(t, cache.MarkCommitted(dir, first.Add(time.Hour)))
+	at, ok := cache.CommittedAt(dir)
+	require.True(t, ok)
+	assert.True(t, at.Equal(first))
+
+	stage := t.TempDir()
+	require.NoError(t, cache.CarryCommitted(stage, dir, time.Now()))
+	at, _ = cache.CommittedAt(stage)
+	assert.True(t, at.Equal(first), "a commit to an existing entry keeps its time")
+
+	fresh := t.TempDir()
+	now := time.Now()
+	require.NoError(t, cache.CarryCommitted(fresh, filepath.Join(dir, "absent"), now))
+	at, _ = cache.CommittedAt(fresh)
+	assert.WithinDuration(t, now, at, time.Second)
+
+	legacy := t.TempDir()
+	old := time.Date(2025, 5, 5, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(legacy, old, old))
+	copied := t.TempDir()
+	require.NoError(t, cache.CarryCommittedFrom(copied, legacy))
+	at, _ = cache.CommittedAt(copied)
+	assert.True(t, at.Equal(old), "a copy of a legacy entry carries its modification time")
+}
+
+// TestScanContainers_OnlyTheNamedOnes: a flow's prune reads only the
+// containers of the mods it changed.
+func TestScanContainers_OnlyTheNamedOnes(t *testing.T) {
+	base := t.TempDir()
+	c := cache.New(base)
+	entry(t, c, cache.Key{GameID: "g", SourceID: "s", ModID: "a", Version: "1.0"}, "a.txt", time.Now())
+	entry(t, c, cache.Key{GameID: "g", SourceID: "s", ModID: "b", Version: "1.0"}, "b.txt", time.Now())
+	mods, err := cache.ScanContainers(c.Root("g"), []string{"s-b", "s-missing", "../escape"})
+	require.NoError(t, err)
+	require.Len(t, mods, 1)
+	assert.Equal(t, "s-b", mods[0].Dir)
 }

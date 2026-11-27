@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -678,6 +679,10 @@ func (s *Service) adoptScannedMod(ctx context.Context, game *domain.Game, r Scan
 			return fmt.Errorf("creating cache: %w", err)
 		}
 		if err := cache.StampKey(cachePath, entryKey); err != nil {
+			return err
+		}
+		// #678: an adopted entry is committed now, unless it already was.
+		if err := cache.MarkCommitted(cachePath, time.Now()); err != nil {
 			return err
 		}
 

@@ -685,6 +685,11 @@ type UpdateOptions struct {
 	// *FomodChoicesRequiredError, nothing written and the download kept. The
 	// update BATCH never asks: it skips such a mod (ReasonFomodReanswer).
 	Fomod map[string]domain.FomodChoices
+
+	// deferPrune leaves the cache prune after the update to the caller
+	// (#678): the update batch prunes every mod it updated once, at its
+	// end, rather than once per mod.
+	deferPrune bool
 }
 
 // UpdateStatus classifies the outcome an UpdateApplyResult reports - the
@@ -1439,10 +1444,12 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 	}
 
 	// #678: the update is done; its mod's old versions beyond the setting
-	// go. Never fatal.
-	pruned, pruneWarnings := s.pruneAfterFlow(ctx, game, []domain.ModReference{{SourceID: newMod.SourceID, ModID: newMod.ID}}, Scope{Op: OpUpdate}, EventSink(emit))
-	result.CachePruned = pruned
-	result.Warnings = append(result.Warnings, pruneWarnings...)
+	// go. Never fatal. A batch prunes once, at its end.
+	if !opts.deferPrune {
+		pruned, pruneWarnings := s.pruneAfterFlow(ctx, game, []domain.ModReference{{SourceID: newMod.SourceID, ModID: newMod.ID}}, Scope{Op: OpUpdate}, EventSink(emit))
+		result.CachePruned = pruned
+		result.Warnings = append(result.Warnings, pruneWarnings...)
+	}
 
 	emit(ModEvent{Scope: scope, Phase: UpdateModUpdated, Version: effectiveVersion})
 	return nil

@@ -35,9 +35,23 @@ type ScannedEntry struct {
 	Legacy bool
 	// Path is the entry's directory.
 	Path string
-	// ModTime is the directory's modification time: when the entry was
-	// last committed to.
+	// ModTime is the directory's modification time, which anything that
+	// touches the entry moves.
 	ModTime time.Time
+	// Committed is when the entry was first committed (CommittedName), and
+	// Stamped whether it carries that stamp: an entry from before stamps
+	// has only ModTime.
+	Committed time.Time
+	Stamped   bool
+}
+
+// CachedAt is when the entry was cached, as the prune ranks versions: its
+// commit stamp, or its modification time for an entry without one.
+func (e ScannedEntry) CachedAt() time.Time {
+	if e.Stamped {
+		return e.Committed
+	}
+	return e.ModTime
 }
 
 // ScannedMod is one mod's container under a cache root: the directory
@@ -73,10 +87,10 @@ func ModDirName(sourceID, modID string) string {
 
 // ScanRoot lists the mod containers under root and the entries each
 // holds. A directory is an entry only when lmm's markers vouch for it - an
-// identity marker or a completion marker in it - so a directory lmm did
-// not write is never taken for one. A missing root is an empty cache.
-// Leftovers of an interrupted removal (RemoveEntry) are deleted on the
-// way.
+// identity marker, a completion marker or a commit stamp in it - so a
+// directory lmm did not write is never taken for one. A missing root is an
+// empty cache. It only reads: SweepPruneLeftovers removes what an
+// interrupted removal left.
 func ScanRoot(root string) ([]ScannedMod, error) {
 	containers, err := os.ReadDir(root)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -90,40 +104,104 @@ func ScanRoot(root string) ([]ScannedMod, error) {
 		if !ce.IsDir() || isReserved(ce.Name()) {
 			continue
 		}
-		m := ScannedMod{Dir: ce.Name(), Path: filepath.Join(root, ce.Name())}
-		children, err := os.ReadDir(m.Path)
+		m, err := scanContainer(root, ce.Name())
 		if err != nil {
-			return nil, fmt.Errorf("reading cache directory %s: %w", m.Path, err)
-		}
-		for _, child := range children {
-			name := child.Name()
-			path := filepath.Join(m.Path, name)
-			if strings.HasPrefix(name, pruneTempPrefix) {
-				_ = os.RemoveAll(path)
-				continue
-			}
-			if isReserved(name) {
-				continue
-			}
-			if !child.IsDir() {
-				if child.Type()&fs.ModeSymlink != 0 {
-					m.Unrecognised = append(m.Unrecognised, name)
-				}
-				continue
-			}
-			e, ok, err := scanEntry(path)
-			if err != nil {
-				return nil, err
-			}
-			if !ok || strings.HasSuffix(name, backupSuffix) {
-				m.Unrecognised = append(m.Unrecognised, name)
-				continue
-			}
-			m.Entries = append(m.Entries, e)
+			return nil, err
 		}
 		out = append(out, m)
 	}
 	return out, nil
+}
+
+// ScanContainers is ScanRoot for the named mod containers only, in the
+// order given; one that does not exist is left out.
+func ScanContainers(root string, names []string) ([]ScannedMod, error) {
+	var out []ScannedMod
+	for _, name := range names {
+		if name == "" || name != filepath.Base(name) || isReserved(name) {
+			continue
+		}
+		info, err := os.Lstat(filepath.Join(root, name))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("reading cache directory %s: %w", root, err)
+		}
+		if !info.IsDir() {
+			continue
+		}
+		m, err := scanContainer(root, name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// scanContainer reads one mod container.
+func scanContainer(root, name string) (ScannedMod, error) {
+	m := ScannedMod{Dir: name, Path: filepath.Join(root, name)}
+	children, err := os.ReadDir(m.Path)
+	if err != nil {
+		return m, fmt.Errorf("reading cache directory %s: %w", m.Path, err)
+	}
+	for _, child := range children {
+		childName := child.Name()
+		path := filepath.Join(m.Path, childName)
+		if isReserved(childName) {
+			continue
+		}
+		if !child.IsDir() {
+			if child.Type()&fs.ModeSymlink != 0 {
+				m.Unrecognised = append(m.Unrecognised, childName)
+			}
+			continue
+		}
+		e, ok, err := scanEntry(path)
+		if err != nil {
+			return m, err
+		}
+		if !ok || strings.HasSuffix(childName, backupSuffix) {
+			m.Unrecognised = append(m.Unrecognised, childName)
+			continue
+		}
+		m.Entries = append(m.Entries, e)
+	}
+	return m, nil
+}
+
+// SweepPruneLeftovers deletes what interrupted removals (RemoveEntry) left
+// in root's mod containers - the named ones, or every one when names is
+// nil. It writes, so a caller holds the mutation slot. Best-effort: what
+// it cannot delete stays for the next sweep.
+func SweepPruneLeftovers(root string, names []string) {
+	if names == nil {
+		containers, err := os.ReadDir(root)
+		if err != nil {
+			return
+		}
+		for _, ce := range containers {
+			if ce.IsDir() && !isReserved(ce.Name()) {
+				names = append(names, ce.Name())
+			}
+		}
+	}
+	for _, name := range names {
+		if name == "" || name != filepath.Base(name) || isReserved(name) {
+			continue
+		}
+		children, err := os.ReadDir(filepath.Join(root, name))
+		if err != nil {
+			continue
+		}
+		for _, child := range children {
+			if strings.HasPrefix(child.Name(), pruneTempPrefix) {
+				_ = os.RemoveAll(filepath.Join(root, name, child.Name()))
+			}
+		}
+	}
 }
 
 // scanEntry reads dir as a cache entry: ok when a marker vouches for it.
@@ -134,7 +212,7 @@ func scanEntry(dir string) (ScannedEntry, bool, error) {
 	}
 	marked := false
 	for _, c := range children {
-		if c.Type().IsRegular() && (c.Name() == KeyMarkerName || FileMarkerName(c.Name())) {
+		if c.Type().IsRegular() && (c.Name() == KeyMarkerName || c.Name() == CommittedName || FileMarkerName(c.Name())) {
 			marked = true
 			break
 		}
@@ -147,6 +225,7 @@ func scanEntry(dir string) (ScannedEntry, bool, error) {
 		return ScannedEntry{}, false, fmt.Errorf("reading cache entry %s: %w", dir, err)
 	}
 	e := ScannedEntry{Path: dir, ModTime: info.ModTime(), Version: filepath.Base(dir), Legacy: true}
+	e.Committed, e.Stamped = CommittedAt(dir)
 	if body, err := os.ReadFile(filepath.Join(dir, KeyMarkerName)); err == nil {
 		if version, variant, ok := parseKeyMarker(body); ok && spells(dir, Key{Version: version, Variant: variant}.versionDir()) {
 			e.Version, e.Variant, e.Legacy = version, variant, false
@@ -191,7 +270,7 @@ func DiskUsage(dir string) (bytes int64, nested bool, err error) {
 // within its container, so the entry is gone in one step and a removal
 // that stops part way never leaves a partial entry behind under the
 // entry's own name; whatever the delete leaves is swept by the next
-// ScanRoot of the container.
+// SweepPruneLeftovers.
 func RemoveEntry(dir string) error {
 	aside := filepath.Join(filepath.Dir(dir), pruneTempPrefix+filepath.Base(dir)+"-"+strconv.FormatInt(time.Now().UnixNano(), 36))
 	if err := os.Rename(dir, aside); err != nil {

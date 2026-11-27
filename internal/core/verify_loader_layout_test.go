@@ -474,7 +474,7 @@ func TestVerify_LoaderTier_AFailedRelayoutLeavesTheCacheEntryByteIdentical(t *te
 	svc, game, mod := stalePreFixJotunn(t)
 	entry := svc.GetGameCache(game).ModPath(cache.Key{GameID: game.ID, SourceID: mod.SourceID, ModID: mod.ID, Version: mod.Version})
 	before := cacheEntrySnapshot(t, entry)
-	require.Len(t, before, 3, "the fixture's entry is Jotunn.dll + Jotunn.xml, and its identity marker (#614)")
+	require.Len(t, before, 4, "the fixture's entry is Jotunn.dll + Jotunn.xml, its identity marker (#614) and its commit stamp (#678)")
 
 	placed := 0
 	svc.SetRelayoutPlaceFileForTest(func(src, dst string) error {

@@ -115,7 +115,7 @@ func TestPlanCachePrune_KeepsInstalledAndTheNewestThreePrevious(t *testing.T) {
 	seedVersions(t, svc, game, "src", "m", all...)
 	seedRow(t, svc, game, "default", "src", "m", "6.0", "")
 
-	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game})
+	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game}, core.CachePruneOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 3, plan.KeepPreviousVersions)
 	assert.Equal(t, []string{"2.0", "1.0"}, prunedVersions(plan.Entries))
@@ -144,7 +144,7 @@ func TestPlanCachePrune_InstalledNeedNotBeNewest(t *testing.T) {
 	seedVersions(t, svc, game, "src", "m", "1.0", "2.0", "3.0", "4.0", "5.0", "6.0")
 	seedRow(t, svc, game, "default", "src", "m", "1.0", "")
 
-	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game})
+	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game}, core.CachePruneOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"3.0", "2.0"}, prunedVersions(plan.Entries))
 }
@@ -182,7 +182,7 @@ func TestPlanCachePrune_NeverPrunesAReferencedVersion(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(snapDir, "before.json"), data, 0o644))
 
-	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game})
+	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game}, core.CachePruneOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"7.0", "3.0"}, prunedVersions(plan.Entries))
 }
@@ -199,7 +199,7 @@ func TestPlanCachePrune_AnUnreadableReferenceKeepsTheGame(t *testing.T) {
 	require.NoError(t, os.MkdirAll(snapDir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(snapDir, "broken.json"), []byte("{not json"), 0o644))
 
-	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game})
+	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game}, core.CachePruneOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, plan.Entries)
 	require.Len(t, plan.Skipped, 1)
@@ -216,7 +216,7 @@ func TestPlanCachePrune_SettingChangesTheCount(t *testing.T) {
 	seedRow(t, svc, game, "default", "src", "m", "4.0", "")
 	setKeepPrevious(t, svc, "1")
 
-	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game})
+	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game}, core.CachePruneOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, 1, plan.KeepPreviousVersions)
 	assert.Equal(t, []string{"2.0", "1.0"}, prunedVersions(plan.Entries))
@@ -232,7 +232,7 @@ func TestPlanCachePrune_UnlimitedPrunesNothing(t *testing.T) {
 		seedRow(t, svc, game, "default", "src", "m", "6.0", "")
 		setKeepPrevious(t, svc, value)
 
-		plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game})
+		plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game}, core.CachePruneOptions{})
 		require.NoError(t, err, value)
 		assert.Equal(t, -1, plan.KeepPreviousVersions, value)
 		assert.Empty(t, plan.Entries, value)
@@ -257,7 +257,7 @@ func TestPlanCachePrune_LeavesWhatIsNoVersionAlone(t *testing.T) {
 	require.NoError(t, os.MkdirAll(stray, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(stray, "x.txt"), []byte("x"), 0o644))
 
-	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game})
+	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game}, core.CachePruneOptions{})
 	require.NoError(t, err)
 	assert.Empty(t, plan.Entries)
 	assert.DirExists(t, stray)
@@ -273,7 +273,7 @@ func TestApplyCachePrune_RefusesAStalePlan(t *testing.T) {
 	seedVersions(t, svc, game, "src", "m", all...)
 	seedRow(t, svc, game, "default", "src", "m", "6.0", "")
 
-	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game})
+	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game}, core.CachePruneOptions{})
 	require.NoError(t, err)
 	require.Len(t, plan.Entries, 2)
 
@@ -311,7 +311,9 @@ func TestCacheStatus_ReportsSizeAndWhatCanBeReclaimed(t *testing.T) {
 func TestSetCacheKeepPreviousVersions_WritesTheSetting(t *testing.T) {
 	svc := newFlowsTestService(t)
 	require.NoError(t, svc.SetCacheKeepPreviousVersions(context.Background(), 5))
-	assert.Equal(t, 5, svc.CacheKeepPreviousVersions())
+	n, err := svc.CacheKeepPreviousVersions()
+	require.NoError(t, err)
+	assert.Equal(t, 5, n)
 	data, err := os.ReadFile(filepath.Join(svc.ConfigDir(), "config.yaml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "keep_previous_versions: 5")
@@ -454,7 +456,9 @@ func TestCacheKeepPreviousVersions_ReadsConfigAtOpen(t *testing.T) {
 	svc, err := core.NewService(core.ServiceConfig{ConfigDir: configDir, DataDir: t.TempDir(), CacheDir: t.TempDir()})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
-	assert.Equal(t, 7, svc.CacheKeepPreviousVersions())
+	n, err := svc.CacheKeepPreviousVersions()
+	require.NoError(t, err)
+	assert.Equal(t, 7, n)
 }
 
 // TestApplyProfileApply_PrunesWhatItInstalled: a profile apply that

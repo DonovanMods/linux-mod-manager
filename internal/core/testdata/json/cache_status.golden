@@ -12,10 +12,21 @@
       "mods": 12,
       "versions": 30,
       "reclaimable_bytes": 536870912,
-      "reclaimable_versions": 4
+      "reclaimable_versions": 4,
+      "uninstalled": [
+        {
+          "game_id": "skyrim-se",
+          "source_id": "nexusmods",
+          "mod_id": "999",
+          "versions": 2,
+          "bytes": 4096
+        }
+      ],
+      "uninstalled_bytes": 4096
     }
   ],
   "bytes": 1073741824,
   "reclaimable_bytes": 536870912,
-  "reclaimable_versions": 4
+  "reclaimable_versions": 4,
+  "uninstalled_bytes": 4096
 }

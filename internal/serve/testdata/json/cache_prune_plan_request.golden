@@ -1,3 +1,4 @@
 {
-  "all_games": true
+  "all_games": true,
+  "include_uninstalled": true
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/storage/cache"
 )
 
@@ -35,6 +36,11 @@ func seedStorageVersions(t *testing.T, f e2eFixture) {
 		when := at.Add(time.Duration(i) * time.Hour)
 		require.NoError(t, os.Chtimes(dir, when, when))
 	}
+	// Installed at a newer version no longer cached: a mod a profile uses.
+	require.NoError(t, f.Svc.SaveInstalledMod(t.Context(), &domain.InstalledMod{
+		Mod:         domain.Mod{ID: "old", SourceID: "fake", Name: "Old Mod", Version: "6.0", GameID: f.Game.ID},
+		ProfileName: "default", UpdatePolicy: domain.UpdateNotify, Enabled: true,
+	}))
 }
 
 // storageLeft is which storageVersions are still cached.
@@ -116,5 +122,54 @@ func TestE2E_SetupStorageSettingWritesConfig(t *testing.T) {
 	data, err = os.ReadFile(filepath.Join(f.Svc.ConfigDir(), "config.yaml"))
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "keep_previous_versions: unlimited")
+	assert.Empty(t, f.BrowserErrors())
+}
+
+// TestE2E_SetupStorageUninstalledNeedTheOptIn (#678 review S5): a mod
+// nothing references is listed in the status and left whole by the
+// preview; ticking "Also remove mods not installed anywhere" re-plans with
+// its versions, and the confirm removes them.
+func TestE2E_SetupStorageUninstalledNeedTheOptIn(t *testing.T) {
+	f := newE2EFixture(t)
+	c := f.Svc.GetGameCache(f.Game)
+	for _, v := range []string{"1.0", "2.0"} {
+		k := cache.Key{GameID: f.Game.ID, SourceID: "fake", ModID: "gone", Version: v}
+		require.NoError(t, c.Store(k, "gone.esp", []byte("payload "+v)))
+		require.NoError(t, cache.MarkFileComplete(c.ModPath(k), "f"+v))
+		require.NoError(t, cache.StampKey(c.ModPath(k), k))
+	}
+	exists := func(v string) bool {
+		return c.Exists(cache.Key{GameID: f.Game.ID, SourceID: "fake", ModID: "gone", Version: v})
+	}
+
+	var uninstalled, announced string
+	f.runInBrowser(t,
+		chromedp.Navigate(f.SetupPath("storage")),
+		chromedp.WaitVisible(`[data-testid="setup-storage-table"]`, chromedp.ByQuery),
+		textContent(`[data-testid="setup-storage-row"][data-game="`+f.Game.ID+`"] [data-testid="setup-storage-uninstalled"]`, &uninstalled),
+		pollUntil(`(document.querySelector('[data-testid="setup-storage-announcer"]')?.textContent ?? "").includes("Cache read")`),
+		textContent(`[data-testid="setup-storage-announcer"]`, &announced),
+	)
+	assert.Contains(t, uninstalled, "1 mod")
+	assert.Contains(t, announced, "a prune frees nothing")
+
+	var rows int
+	f.runInBrowser(t,
+		clickWhenSettled(`[data-action="plan-cache-prune"]`),
+		chromedp.WaitVisible(`.modal[data-kind="cache_prune"] [data-testid="cache-prune-nothing"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`.modal [data-testid="cache-prune-uninstalled"] input[name="include_uninstalled"]`, chromedp.ByQuery),
+		clickWhenSettled(`.modal input[name="include_uninstalled"]`),
+		chromedp.WaitVisible(`.modal [data-testid="cache-prune-summary"]`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.querySelectorAll('.modal [data-testid="cache-prune-entry"]').length`, &rows),
+	)
+	assert.Equal(t, 2, rows, "both versions of the mod nothing uses")
+	assert.True(t, exists("1.0") && exists("2.0"), "the preview removes nothing")
+
+	f.runInBrowser(t,
+		clickWhenSettled(`.modal [data-action="confirm"]`),
+		waitGone(`.modal`),
+		chromedp.WaitVisible(`[data-testid="setup-storage"] .job-progress[data-state="succeeded"]`, chromedp.ByQuery),
+	)
+	assert.False(t, exists("1.0") || exists("2.0"))
 	assert.Empty(t, f.BrowserErrors())
 }

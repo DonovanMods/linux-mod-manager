@@ -41,6 +41,24 @@ function reclaimLabel(row) {
   return `${bytesOf(row.reclaimable_bytes)} (${oldVersions(row.reclaimable_versions)})`;
 }
 
+/** uninstalledLabel is a status row's column of the mods nothing
+ * references: how many, and the room they take. */
+function uninstalledLabel(row) {
+  const mods = row.uninstalled ?? [];
+  if (mods.length === 0) return "None";
+  const count = mods.length === 1 ? "1 mod" : `${mods.length} mods`;
+  return `${count} (${bytesOf(row.uninstalled_bytes)})`;
+}
+
+/** statusSentence is what the live region says when the status arrives. */
+function statusSentence(status) {
+  const frees =
+    status.reclaimable_versions > 0
+      ? `a prune frees ${bytesOf(status.reclaimable_bytes)}`
+      : "a prune frees nothing";
+  return `Cache read: ${bytesOf(status.bytes)} in all; ${frees}.`;
+}
+
 /** finishedState is the state of the job an origin last started, or "". */
 function finishedState(state, origin) {
   const id = state?.origins?.[origin];
@@ -108,12 +126,25 @@ export function SetupStorage({ state, actions, game }) {
     });
   }
 
+  // The live region stays mounted from the first render, so the sentence
+  // the status's arrival writes into it is announced (a region rebuilt
+  // with its text announces nothing).
+  const announcer = html`<p
+    class="visually-hidden"
+    role="status"
+    aria-live="polite"
+    data-testid="setup-storage-announcer"
+  >
+    ${status ? statusSentence(status) : ""}
+  </p>`;
+
   if (!status) {
     return html`
       <div
         class="form-section form-section--measure setup-section"
         data-testid="setup-storage"
       >
+        ${announcer}
         ${
           error
             ? html`<p class="app-error">${error}</p>`
@@ -139,6 +170,7 @@ export function SetupStorage({ state, actions, game }) {
       class="form-section form-section--measure setup-section"
       data-testid="setup-storage"
     >
+      ${announcer}
       <p class="form-hint">
         lmm keeps the files of the mod versions it installs in its cache, so a
         rollback or a profile switch needs no download. It prunes a mod's old
@@ -173,13 +205,17 @@ export function SetupStorage({ state, actions, game }) {
         </p>
       </div>
       <table class="setup-table" data-testid="setup-storage-table">
+        <caption class="visually-hidden">
+          The mod cache of each game: its size, and what a prune frees
+        </caption>
         <thead>
           <tr>
-            <th>Game</th>
-            <th>Size</th>
-            <th>Mods</th>
-            <th>Versions</th>
-            <th>A prune frees</th>
+            <th scope="col">Game</th>
+            <th scope="col">Size</th>
+            <th scope="col">Mods</th>
+            <th scope="col">Versions</th>
+            <th scope="col">A prune frees</th>
+            <th scope="col">Not installed anywhere</th>
           </tr>
         </thead>
         <tbody>
@@ -198,6 +234,9 @@ export function SetupStorage({ state, actions, game }) {
                 <td>${g.mods}</td>
                 <td>${g.versions}</td>
                 <td data-testid="setup-storage-reclaim">${reclaimLabel(g)}</td>
+                <td data-testid="setup-storage-uninstalled">
+                  ${uninstalledLabel(g)}
+                </td>
               </tr>
             `,
           )}
@@ -211,6 +250,15 @@ export function SetupStorage({ state, actions, game }) {
             : "."
         }
       </p>
+      ${
+        status.uninstalled_bytes > 0 &&
+        html`<p class="form-hint" data-testid="setup-storage-uninstalled-hint">
+          Mods not installed anywhere - in no profile or snapshot, such as one
+          uninstalled with its cache kept - take
+          ${bytesOf(status.uninstalled_bytes)}. A prune keeps them unless you
+          tick "Also remove mods not installed anywhere" in its preview.
+        </p>`
+      }
       ${games
         .filter((g) => g.skipped)
         .map(
@@ -229,7 +277,7 @@ export function SetupStorage({ state, actions, game }) {
           >
             <button
               type="button"
-              class="button"
+              class="button button--primary"
               data-action="plan-cache-prune"
               onClick=${() => prune(false)}
             >
@@ -244,7 +292,7 @@ export function SetupStorage({ state, actions, game }) {
         >
           <button
             type="button"
-            class="button button--primary"
+            class="button"
             data-action="plan-cache-prune-all"
             onClick=${() => prune(true)}
           >

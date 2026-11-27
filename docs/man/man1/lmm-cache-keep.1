@@ -27,6 +27,12 @@ negative count) never prunes. Delete a snapshot to let go of the versions
 only it references.
 
 .PP
+A mod nothing references at all - not installed in any profile, named by
+no profile or snapshot, such as one uninstalled with --keep-cache - is left
+whole. 'lmm cache status' lists those as not installed anywhere, and only
+\&'lmm cache prune --include-uninstalled' removes them.
+
+.PP
 Setting it prunes nothing by itself; the next update of a mod, or 'lmm
 cache prune', applies it.
 

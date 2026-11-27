@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/adapter"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -451,6 +452,10 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 			return nil, fmt.Errorf("creating cache directory: %w", err)
 		}
 		if err := cache.StampKey(cachePath, entryKey); err != nil {
+			return nil, err
+		}
+		// #678: a re-imported entry is committed anew.
+		if err := cache.MarkCommitted(cachePath, time.Now()); err != nil {
 			return nil, err
 		}
 

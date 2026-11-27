@@ -439,6 +439,29 @@ func (d *DB) ModVersionRows(ctx context.Context, sourceID, modID string) (out []
 	return out, rows.Err()
 }
 
+// InstalledGameIDs returns every game ID an installed row names, sorted -
+// configured games and ones games.yaml no longer lists alike (#678: a
+// removed game's rows still reference cache entries).
+func (d *DB) InstalledGameIDs(ctx context.Context) (out []string, err error) {
+	rows, err := d.QueryContext(ctx, `SELECT DISTINCT game_id FROM installed_mods ORDER BY game_id`)
+	if err != nil {
+		return nil, fmt.Errorf("querying installed games: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = cerr
+		}
+	}()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning an installed game: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 // GameVersionRow is one installed row of a game (#678): the mod it is and
 // the versions it names.
 type GameVersionRow struct {

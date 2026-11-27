@@ -4650,8 +4650,15 @@ func TestJSONGoldens(t *testing.T) {
 				KeepPreviousVersions: 3, Games: []string{"skyrim-se", "wow"},
 				Entries:  []core.CachePruneEntry{goldenCachePruneEntry, goldenCachePruneVariant},
 				Versions: 2, Bytes: 3072,
-				Skipped: []core.CachePruneSkip{{GameID: "wow", Reason: "reading profile raid of wow: yaml: line 3: did not find expected key"}},
+				Skipped:            []core.CachePruneSkip{{GameID: "wow", Reason: "reading profile raid of wow: yaml: line 3: did not find expected key"}},
+				IncludeUninstalled: true,
+				Uninstalled:        []core.CacheUninstalledMod{goldenCacheUninstalled},
 			},
+		},
+		{
+			// #678 review S5: a mod nothing references.
+			"cache_uninstalled_mod",
+			goldenCacheUninstalled,
 		},
 		{
 			// #678: `lmm cache prune --json`.
@@ -4676,6 +4683,7 @@ func TestJSONGoldens(t *testing.T) {
 			core.CacheStatus{
 				KeepPreviousVersions: 3, Games: []core.CacheGameStatus{goldenCacheGameStatus},
 				Bytes: 1073741824, ReclaimableBytes: 536870912, ReclaimableVersions: 4,
+				UninstalledBytes: 4096,
 			},
 		},
 		{
@@ -5379,4 +5387,10 @@ var goldenCacheGameStatus = core.CacheGameStatus{
 	GameID: "skyrim-se", GameName: "Skyrim Special Edition", Path: "/home/user/.local/share/lmm/cache/skyrim-se",
 	SharedWith: []string{"skyrim-vr"}, Bytes: 1073741824, Mods: 12, Versions: 30,
 	ReclaimableBytes: 536870912, ReclaimableVersions: 4,
+	Uninstalled: []core.CacheUninstalledMod{goldenCacheUninstalled}, UninstalledBytes: 4096,
+}
+
+// goldenCacheUninstalled is a mod nothing references (#678 review S5).
+var goldenCacheUninstalled = core.CacheUninstalledMod{
+	GameID: "skyrim-se", SourceID: "nexusmods", ModID: "999", Versions: 2, Bytes: 4096,
 }
