@@ -445,6 +445,13 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		if err := c.Claim(entryKey); err != nil {
 			return nil, err
 		}
+		// #678: read before the removal below, so a re-import restores the
+		// entry's first commit time (its stamp, or its modification time
+		// for an entry from before stamps); a new entry is committed now.
+		firstCommit, existed := cache.PreviousCommit(cachePath)
+		if !existed {
+			firstCommit = time.Now()
+		}
 		if err := os.RemoveAll(cachePath); err != nil {
 			return nil, fmt.Errorf("removing existing cache directory: %w", err)
 		}
@@ -454,8 +461,7 @@ func (i *Importer) importWithIdentity(ctx context.Context, archivePath string, g
 		if err := cache.StampKey(cachePath, entryKey); err != nil {
 			return nil, err
 		}
-		// #678: a re-imported entry is committed anew.
-		if err := cache.MarkCommitted(cachePath, time.Now()); err != nil {
+		if err := cache.MarkCommitted(cachePath, firstCommit); err != nil {
 			return nil, err
 		}
 

@@ -43,14 +43,32 @@ func MarkCommitted(dir string, at time.Time) error {
 }
 
 // CarryCommitted stamps stage, the directory about to replace (or become)
-// the entry at entry, with the entry's own commit time when it has one,
-// else the one stage already carries, else now. A commit to an existing
-// entry therefore keeps the time it was first committed.
+// the entry at entry, with the entry's own commit time (PreviousCommit:
+// its stamp, or - for an entry from before stamps - its modification
+// time), else the one stage already carries, else now. A commit to an
+// existing entry therefore never makes it look newer than it is: a
+// `verify --fix` re-download of an old version keeps the old version's
+// place.
 func CarryCommitted(stage, entry string, now time.Time) error {
-	if at, ok := CommittedAt(entry); ok {
+	if at, ok := PreviousCommit(entry); ok {
 		return writeCommitted(stage, at)
 	}
 	return MarkCommitted(stage, now)
+}
+
+// PreviousCommit is when the entry at dir was committed, as far as lmm can
+// tell, for a commit about to replace it: its stamp, or its directory's
+// modification time for an entry from before stamps. ok is false when dir
+// does not exist - the commit makes a new entry.
+func PreviousCommit(dir string) (time.Time, bool) {
+	if at, ok := CommittedAt(dir); ok {
+		return at, true
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return time.Time{}, false
+	}
+	return info.ModTime(), true
 }
 
 // CarryCommittedFrom stamps dst, a copy of the entry at src, with src's

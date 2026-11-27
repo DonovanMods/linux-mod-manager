@@ -23,6 +23,8 @@ For each mod, the cache keeps:
    - the version a mod would roll back to (`lmm update rollback`);
    - a version a profile is locked or pinned to, or a collection pins;
    - a version another profile has installed;
+   - a version your game folder still uses: lmm's links in the game
+     folder point into it;
    - a version a [snapshot](troubleshooting.md#save-a-restore-point-snapshots)
      records, so restoring the snapshot never depends on the mod's site
      still offering the file.

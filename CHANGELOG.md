@@ -18,7 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on top of those every older version a profile or snapshot still needs:
   a rollback target, a locked or pinned version, a collection pin (the one
   a substitute stands in for and a skipped one included), another
-  profile's version, a snapshot's. A needed version among the newest 3
+  profile's version, a snapshot's, one the game directory's links still
+  point into. A needed version among the newest 3
   counts as one of them, so updates from 1.0 to 5.0 keep 5.0, 4.0, 3.0 and
   2.0. "Newest" is when lmm first cached the version (a stamp written once
   per entry), so a re-stamp or a repair never makes an old version look

@@ -377,3 +377,38 @@ func TestPlanCachePrune_KeepsEveryCollectionPin(t *testing.T) {
 	}
 	assert.Equal(t, map[string][]string{"m": {"3.0", "1.0"}}, got, "2.0 of m and 1.0 of skipped are pinned")
 }
+
+// TestPlanCachePrune_KeepsWhatIsDeployed (#678 re-review): a version the
+// game directory's symlinks point into is in use, even when no row
+// records it - an update that failed after deploying, before its row was
+// saved. A deployed file lmm cannot read leaves the cache whole.
+func TestPlanCachePrune_KeepsWhatIsDeployed(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := pruneGame(t, svc)
+	setKeepPrevious(t, svc, "0")
+	seedVersions(t, svc, game, "src", "m", "1.0", "2.0", "3.0")
+	// 1.0 is deployed (symlinks into its entry, deployed_files rows)...
+	require.NoError(t, svc.GetInstallerForTest(game).Install(context.Background(), game,
+		&domain.Mod{ID: "m", SourceID: "src", Version: "1.0", GameID: game.ID}, "default"))
+	// ...while the row says 3.0.
+	seedRow(t, svc, game, "default", "src", "m", "3.0", "")
+	deployed := filepath.Join(game.ModPath, "data", "m.esp")
+	info, err := os.Lstat(deployed)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&os.ModeSymlink, "the fixture deploys by symlink")
+
+	plan, err := svc.PlanCachePrune(context.Background(), []*domain.Game{game}, core.CachePruneOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2.0"}, prunedVersions(plan.Entries), "1.0 is deployed")
+
+	if os.Geteuid() != 0 {
+		dir := filepath.Join(game.ModPath, "data")
+		require.NoError(t, os.Chmod(dir, 0o000))
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+		plan, err = svc.PlanCachePrune(context.Background(), []*domain.Game{game}, core.CachePruneOptions{})
+		require.NoError(t, err)
+		assert.Empty(t, plan.Entries)
+		require.Len(t, plan.Skipped, 1)
+		assert.Contains(t, plan.Skipped[0].Reason, "deployed")
+	}
+}

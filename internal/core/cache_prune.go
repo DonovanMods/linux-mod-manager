@@ -10,7 +10,9 @@
 //     cache.keep_previous_versions (default 3), newest by when the entry
 //     was first committed (cache.CommittedName; an entry from before that
 //     stamp, by its directory's modification time), ties by version order;
-//  3. on top of those, every PROTECTED version: one an installed row rolls
+//  3. on top of those, every version a deployed symlink of a game using
+//     the cache points into (in use, whatever the records say), and every
+//     PROTECTED version: one an installed row rolls
 //     back to (previous_version), one any profile's ref names (a locked or
 //     pinned version, a collection pin and the pin a substitute stands in
 //     for, a collection's skipped pin, a mod not installed yet), one any
@@ -67,6 +69,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
@@ -696,6 +699,19 @@ func (s *Service) scanLocation(ctx context.Context, loc cacheLocation, scan prun
 			refs = nil
 		}
 	}
+	// #678 re-review: what is deployed is in use, whatever the records
+	// say - a failed update can leave a version deployed whose row was
+	// never saved.
+	var deployed map[string][]string
+	if refs != nil {
+		if deployed, err = s.deployedCacheTargets(ctx, loc, scan.only); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return out, ctxErr
+			}
+			out.skipped = "reading what is deployed: " + err.Error()
+			refs = nil
+		}
+	}
 	for _, m := range mods {
 		if strings.HasPrefix(m.Dir, domain.SourceMerged+"-") || len(m.Entries) == 0 {
 			continue
@@ -706,13 +722,13 @@ func (s *Service) scanLocation(ctx context.Context, loc cacheLocation, scan prun
 		if refs == nil {
 			continue
 		}
-		if !refs.referenced(m.Dir) {
+		if !refs.referenced(m.Dir) && len(deployed[m.Dir]) == 0 {
 			s.scanUninstalled(loc, m, versions, refs, scan, &out)
 			continue
 		}
 		previous := 0
 		for _, v := range versions {
-			if keeps(refs.installed, m.Dir, v) {
+			if keeps(refs.installed, m.Dir, v) || deployedFrom(deployed[m.Dir], v) {
 				continue
 			}
 			previous++
@@ -728,6 +744,104 @@ func (s *Service) scanLocation(ctx context.Context, loc cacheLocation, scan prun
 		}
 	}
 	return out, nil
+}
+
+// deployedCacheTargets is where every deployed symlink of loc's games
+// points inside loc, by mod container: each target resolved (symlinks and
+// dots), for the containers only names (every one when nil). A deployed
+// file that is not a symlink - a copy or a hard link - does not need the
+// cache and is not counted. Any path it cannot read is an error, and the
+// caller then leaves the location whole.
+func (s *Service) deployedCacheTargets(ctx context.Context, loc cacheLocation, only []string) (map[string][]string, error) {
+	root := resolvedCacheDir(loc.path)
+	var wanted map[string]bool
+	if only != nil {
+		wanted = make(map[string]bool, len(only))
+		for _, dir := range only {
+			wanted[dir] = true
+		}
+	}
+	out := map[string][]string{}
+	seen := map[string]bool{}
+	for _, g := range loc.sharing {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		records, err := s.db.DeployedPathRecords(ctx, g.ID)
+		if err != nil {
+			return nil, err
+		}
+		for p, recs := range records {
+			for _, r := range recs {
+				container := cache.ModDirName(r.SourceID, r.ModID)
+				if wanted != nil && !wanted[container] {
+					continue
+				}
+				target := deployTarget(g, p)
+				if r.ModPath != "" && p.Root == domain.RootModPath {
+					target = filepath.Join(r.ModPath, filepath.FromSlash(p.Rel))
+				}
+				if target == "" || seen[target] {
+					continue
+				}
+				seen[target] = true
+				resolved, ok, err := symlinkTarget(target)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					continue
+				}
+				rel, err := filepath.Rel(root, resolved)
+				if err != nil || rel == "." || !filepath.IsLocal(rel) {
+					continue
+				}
+				dir := strings.SplitN(filepath.ToSlash(rel), "/", 2)[0]
+				out[dir] = append(out[dir], resolved)
+			}
+		}
+	}
+	return out, nil
+}
+
+// symlinkTarget is the resolved target of the deployed file at path when it
+// is a symlink; ok is false when it is not one, or is not there.
+func symlinkTarget(path string) (string, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("reading deployed file %s: %w", path, err)
+	}
+	if info.Mode()&fs.ModeSymlink == 0 {
+		return "", false, nil
+	}
+	link, err := os.Readlink(path)
+	if err != nil {
+		return "", false, fmt.Errorf("reading deployed file %s: %w", path, err)
+	}
+	if !filepath.IsAbs(link) {
+		link = filepath.Join(filepath.Dir(path), link)
+	}
+	return resolvedCacheDir(link), true, nil
+}
+
+// deployedFrom reports whether a deployed symlink's target (targets, of
+// v's container) lies inside one of v's entries.
+func deployedFrom(targets []string, v cachedVersion) bool {
+	if len(targets) == 0 {
+		return false
+	}
+	for _, e := range v.entries {
+		dir := resolvedCacheDir(e.Path) + string(filepath.Separator)
+		for _, t := range targets {
+			if strings.HasPrefix(t, dir) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // scanUninstalled records a mod nothing references: listed with its size,

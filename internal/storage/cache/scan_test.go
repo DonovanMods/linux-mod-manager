@@ -178,3 +178,22 @@ func TestScanContainers_OnlyTheNamedOnes(t *testing.T) {
 	require.Len(t, mods, 1)
 	assert.Equal(t, "s-b", mods[0].Dir)
 }
+
+// TestCarryCommitted_AnUnstampedEntryKeepsItsModTime (#678 re-review): a
+// commit over an entry from before stamps - a verify --fix re-download of
+// an old version - carries the entry's modification time, never now, so
+// the old version is not ranked newest.
+func TestCarryCommitted_AnUnstampedEntryKeepsItsModTime(t *testing.T) {
+	legacy := t.TempDir()
+	old := time.Date(2025, 3, 3, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(legacy, old, old))
+	stage := t.TempDir()
+	require.NoError(t, cache.CarryCommitted(stage, legacy, time.Now()))
+	at, ok := cache.CommittedAt(stage)
+	require.True(t, ok)
+	assert.True(t, at.Equal(old), "got %v", at)
+
+	at, ok = cache.PreviousCommit(filepath.Join(legacy, "absent"))
+	assert.False(t, ok)
+	assert.True(t, at.IsZero())
+}
