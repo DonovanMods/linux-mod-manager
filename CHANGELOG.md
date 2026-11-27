@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **lmm prunes old mod versions from its cache (#678).** The cache kept
+  every version of every mod forever; a mod that updates weekly filled it
+  with versions nobody goes back to. Per mod, lmm now keeps every
+  installed version, the newest 3 other versions
+  (`cache.keep_previous_versions` in `config.yaml`, default 3; `0` keeps
+  only installed ones, `unlimited` or a negative count never prunes), and
+  on top of those every older version a profile or snapshot still needs:
+  a rollback target, a locked or pinned version, a collection pin,
+  another profile's version, a snapshot's. A needed version among the
+  newest 3 counts as one of them, so updates from 1.0 to 5.0 keep 5.0,
+  4.0, 3.0 and 2.0. The merged pak's entry and anything in the cache lmm's
+  markers do not vouch for are never touched, and a game whose profiles,
+  installed records or snapshots lmm cannot read is left whole, with the
+  reason. An update, rollback, profile apply or switch, or collection
+  update prunes the mods it changed afterwards; its plan says what that
+  frees ("frees 1.2 GiB (2 old versions)"), and a prune that fails is a
+  warning, never a failed update. `lmm cache` (or `lmm cache status`)
+  shows each game's cache size and what a prune frees, `lmm cache prune`
+  (`--game`, `--dry-run`, `--yes`, `--json`) prunes every game or one, and
+  `lmm cache keep` shows or sets the setting. The web UI's new **Setup →
+  Storage** section shows the same status, sets the same setting, and
+  prunes through a preview listing every version it removes with its
+  size; every flow's preview says what its prune frees. Nothing is pruned
+  on its own when you upgrade: existing old versions go at each mod's
+  next update, or by an explicit prune.
+
 - **NexusMods holds outlast the command that set them (#675).** When
   NexusMods (or Cloudflare in front of it) asks lmm to wait, when lmm's
   own breaker trips, or when a key's hourly and daily quota are both

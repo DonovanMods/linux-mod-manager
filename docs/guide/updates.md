@@ -282,6 +282,11 @@ install any earlier version. In the terminal:
 lmm update rollback <mod-id>
 ```
 
+lmm keeps the installed version of each mod and the 3 newest versions
+before it, plus any version a profile, a lock or a snapshot still needs.
+Older ones are removed after an update. See
+[Disk space and the mod cache](cache.md) to keep more, or fewer.
+
 ## Choosing how each mod updates
 
 Each mod has an update setting:

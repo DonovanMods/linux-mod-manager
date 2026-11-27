@@ -48,6 +48,7 @@ Then read whichever of these you need:
 | Mod a Unity game such as Valheim                    | [Unity games and BepInEx](bepinex.md)                                                     |
 | Start the game from lmm                             | [Launching your game](launch.md)                                                          |
 | Keep the web interface running all the time         | [Run the web UI in the background](background.md)                                         |
+| Free disk space taken by old mod versions           | [Disk space and the mod cache](cache.md)                                                  |
 | Fix something, or get my game back to normal        | [When something goes wrong](troubleshooting.md)                                           |
 | Look up a word or a quick answer                    | [FAQ and glossary](faq.md)                                                                |
 
