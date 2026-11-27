@@ -40,12 +40,17 @@ var progressTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 // readProgressFrame is one read_progress frame: how far one in-flight read
 // has got. Index/Total count mods across the whole read (for the update
 // check, across every source it asked - core.UpdateCheckEvent's Global
-// pair), and ModName is the mod just reached.
+// pair), and ModName is the mod just reached. A verify also names the pass
+// it is in (#677): Phase is core.VerifyPhase's word, and Index/Total then
+// count what that pass walks - mods for "versions" and "blocked", files
+// for "files" and "deployed", nothing (both 0) for "records" and
+// "convergence".
 type readProgressFrame struct {
 	Token   string `json:"token"`
 	Read    string `json:"read"`
 	GameID  string `json:"game_id"`
 	Profile string `json:"profile"`
+	Phase   string `json:"phase,omitempty"`
 	ModName string `json:"mod_name,omitempty"`
 	Index   int    `json:"index"`
 	Total   int    `json:"total"`
@@ -61,22 +66,34 @@ type readProgressFrame struct {
 // read's whole percent moves, plus its first and last tick - at most 101
 // for any number of mods. A thousand-mod check publishing every tick could
 // otherwise overrun a browser's activity buffer (activityWatcherBuffer) and
-// get its whole session stream dropped over a progress bar.
+// get its whole session stream dropped over a progress bar. A verify's
+// phases (#677) are gated one at a time: a new phase's first tick always
+// goes, so the line says the pass has changed, and a phase with no
+// position (total 0) goes only that once.
 type readProgressGate struct {
-	seen bool
-	last int
+	seen  bool
+	phase string
+	last  int
 }
 
-// admit reports whether tick index of total should be published.
-func (g *readProgressGate) admit(index, total int) bool {
+// admit reports whether phase's tick index of total should be published.
+func (g *readProgressGate) admit(phase string, index, total int) bool {
+	if !g.seen || phase != g.phase {
+		g.seen, g.phase, g.last = true, phase, -1
+	}
 	if total <= 0 {
+		// Only a named phase has something to say without a position.
+		if phase != "" && g.last == -1 {
+			g.last = 0
+			return true
+		}
 		return false
 	}
 	pct := index * 100 / total
-	if g.seen && pct == g.last && index != total {
+	if pct == g.last && index != total {
 		return false
 	}
-	g.seen, g.last = true, pct
+	g.last = pct
 	return true
 }
 
@@ -107,6 +124,7 @@ type readReporter struct {
 
 	mu    sync.Mutex
 	gate  readProgressGate
+	phase string
 	index int
 	total int
 	name  string
@@ -141,10 +159,10 @@ func (r *readReporter) sink() core.EventSink {
 	return func(e core.Event) {
 		switch ev := e.(type) {
 		case core.UpdateCheckEvent:
-			r.tick(ev.ModName, ev.GlobalIndex, ev.GlobalTotal)
+			r.tick("", ev.ModName, ev.GlobalIndex, ev.GlobalTotal)
 		case core.VerifyEvent:
 			if ev.Kind == core.VerifyEvProgress {
-				r.tick(ev.ModName, ev.Index, ev.Total)
+				r.tick(string(ev.Phase), ev.ModName, ev.Index, ev.Total)
 			}
 		}
 	}
@@ -165,14 +183,18 @@ func (r *readReporter) watch(ctx context.Context) context.Context {
 	})
 }
 
-func (r *readReporter) tick(name string, index, total int) {
+func (r *readReporter) tick(phase, name string, index, total int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if phase != r.phase {
+		// A new pass: the last pass's mod is not where this one is.
+		r.phase, r.name = phase, ""
+	}
 	if name != "" {
 		r.name = name
 	}
 	r.index, r.total = index, total
-	if !r.gate.admit(index, total) && !r.noticed {
+	if !r.gate.admit(phase, index, total) && !r.noticed {
 		return
 	}
 	r.noticed = false
@@ -193,6 +215,6 @@ func (r *readReporter) notice(text string) {
 func (r *readReporter) publishLocked(notice string) {
 	r.s.jobs.publish(activityEvent{Name: activityReadProgressEvent, Payload: readProgressFrame{
 		Token: r.token, Read: r.read, GameID: r.sel.Game.ID, Profile: r.sel.Profile,
-		ModName: r.name, Index: r.index, Total: r.total, Notice: notice,
+		Phase: r.phase, ModName: r.name, Index: r.index, Total: r.total, Notice: notice,
 	}})
 }

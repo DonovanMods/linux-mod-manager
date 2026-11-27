@@ -100,10 +100,16 @@ func TestAPIHealth_ProgressTokenPublishesReadProgressAndKeepsTheMemo(t *testing.
 	rec := doAPI(s, http.MethodGet, scoped("/api/v1/health", game)+"&force=1&progress=h1", "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	frames := readProgressFrames(live)
-	require.Len(t, frames, len(updatableModIDs), "one frame per mod verified")
-	for i, f := range frames {
+	var versions []readProgressFrame
+	for _, f := range frames {
 		assert.Equal(t, "h1", f.Token)
 		assert.Equal(t, readHealth, f.Read)
+		if f.Phase == string(core.VerifyPhaseVersions) {
+			versions = append(versions, f)
+		}
+	}
+	require.Len(t, versions, len(updatableModIDs), "one frame per mod verified")
+	for i, f := range versions {
 		assert.Equal(t, i+1, f.Index)
 		assert.Equal(t, len(updatableModIDs), f.Total)
 	}
@@ -123,18 +129,18 @@ func TestReadProgressGate_CapsFramesPerRead(t *testing.T) {
 	var g readProgressGate
 	sent := 0
 	for i := 1; i <= 1000; i++ {
-		if g.admit(i, 1000) {
+		if g.admit("", i, 1000) {
 			sent++
 		}
 	}
 	assert.LessOrEqual(t, sent, 101, "at most one frame per whole percent")
-	assert.True(t, (&readProgressGate{}).admit(1, 1000), "the first tick always goes")
+	assert.True(t, (&readProgressGate{}).admit("", 1, 1000), "the first tick always goes")
 
 	var last readProgressGate
 	for i := 1; i < 1000; i++ {
-		last.admit(i, 1000)
+		last.admit("", i, 1000)
 	}
-	assert.True(t, last.admit(1000, 1000), "the last tick always goes")
+	assert.True(t, last.admit("", 1000, 1000), "the last tick always goes")
 }
 
 // throttleNotice is what a source's transport says while it waits out a
@@ -219,7 +225,7 @@ func TestReadReporter_ARepeatedNoticeIsNotSentAgain(t *testing.T) {
 	// What the transport raises for each mod a held source refuses.
 	until := time.Now().Add(4 * time.Minute)
 	for i := 1; i <= 353; i++ {
-		sink(core.VerifyEvent{Kind: core.VerifyEvProgress, Scope: core.Scope{Index: i, Total: 353, ModName: "m"}})
+		sink(core.VerifyEvent{Kind: core.VerifyEvProgress, Phase: core.VerifyPhaseVersions, Scope: core.Scope{Index: i, Total: 353, ModName: "m"}})
 		source.Notify(ctx, source.Notice{Kind: source.NoticeSuspended, Source: "NexusMods", Until: until})
 	}
 
@@ -232,4 +238,86 @@ func TestReadReporter_ARepeatedNoticeIsNotSentAgain(t *testing.T) {
 	}
 	assert.LessOrEqual(t, notices, 3, "the same sentence is said once, not per mod")
 	assert.LessOrEqual(t, len(frames), 110, "and the ticks keep to the gate's hundred or so")
+}
+
+// TestAPIHealth_LaterVerifyPassesAreSaidOnTheReadsProgress (#677): the
+// Health card's verify reported only its version pass, so the loading line
+// held "16/16" while the deployed-content pass, the records pass and the
+// convergence ran on - for most of a long verify. Their phases now arrive
+// as read_progress frames too, each naming the pass, after the versions.
+func TestAPIHealth_LaterVerifyPassesAreSaidOnTheReadsProgress(t *testing.T) {
+	s, _, game := newUpdatesFixtureServer(t)
+	_, live, cancel := s.jobs.watch(256)
+	defer cancel()
+
+	rec := doAPI(s, http.MethodGet, scoped("/api/v1/health", game)+"&force=1&progress=h1", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var phases []string
+	byPhase := map[string][]readProgressFrame{}
+	for _, f := range readProgressFrames(live) {
+		if len(phases) == 0 || phases[len(phases)-1] != f.Phase {
+			phases = append(phases, f.Phase)
+		}
+		byPhase[f.Phase] = append(byPhase[f.Phase], f)
+	}
+	require.NotEmpty(t, phases)
+	assert.Equal(t, string(core.VerifyPhaseVersions), phases[0], "the version pass comes first")
+	assert.Equal(t, []string{string(core.VerifyPhaseRecords), string(core.VerifyPhaseConvergence)}, phases[len(phases)-2:],
+		"and the run's last passes say themselves: %v", phases)
+	assert.Contains(t, phases, string(core.VerifyPhaseBlocked), phases)
+	for _, phase := range []string{string(core.VerifyPhaseRecords), string(core.VerifyPhaseConvergence)} {
+		require.Len(t, byPhase[phase], 1, phase)
+		assert.Zero(t, byPhase[phase][0].Total, phase)
+		assert.Empty(t, byPhase[phase][0].ModName, "a pass over no mod names none: %s", phase)
+	}
+}
+
+// TestReadProgressGate_EachPhaseIsGatedOnItsOwn (#677): a new phase's first
+// tick always goes, so the line says the pass changed even when its
+// percent matches the last pass's; a phase with no position goes once.
+func TestReadProgressGate_EachPhaseIsGatedOnItsOwn(t *testing.T) {
+	var g readProgressGate
+	for i := 1; i <= 16; i++ {
+		require.True(t, g.admit("versions", i, 16))
+	}
+	assert.True(t, g.admit("deployed", 1, 23000), "a new phase's first tick")
+	sent := 1
+	for i := 2; i <= 23000; i++ {
+		if g.admit("deployed", i, 23000) {
+			sent++
+		}
+	}
+	assert.LessOrEqual(t, sent, 101)
+	assert.True(t, g.admit("records", 0, 0), "a phase with no position, once")
+	assert.False(t, g.admit("records", 0, 0), "and not again")
+	assert.True(t, g.admit("convergence", 0, 0))
+	assert.False(t, (&readProgressGate{}).admit("", 0, 0), "an update check's positionless tick says nothing, as before")
+}
+
+// TestSummarizeJobEvent_NamesTheVerifyPhase (#677 review): a verify --fix
+// job's tray row took its phase only from a core.FlowEvent, which a
+// VerifyEvent is not, so its later passes read "1200 of 23236" with no pass
+// named. A progress tick's phase now rides on the frame, prefixed verify_
+// so it cannot be mistaken for a flow phase; a finding names none.
+func TestSummarizeJobEvent_NamesTheVerifyPhase(t *testing.T) {
+	frame := summarizeJobEvent("j1", "verify_fix", core.VerifyEvent{
+		Scope: core.Scope{Op: core.OpVerify, Index: 1200, Total: 23236},
+		Kind:  core.VerifyEvProgress, Phase: core.VerifyPhaseDeployed,
+	})
+	assert.Equal(t, "verify_deployed", frame.Phase)
+	assert.Equal(t, 1200, frame.Index)
+	assert.Equal(t, 23236, frame.Total)
+
+	for _, phase := range []core.VerifyPhase{
+		core.VerifyPhaseVersions, core.VerifyPhaseFiles, core.VerifyPhaseDeployed,
+		core.VerifyPhaseBlocked, core.VerifyPhaseRecords, core.VerifyPhaseConvergence,
+	} {
+		f := summarizeJobEvent("j1", "verify_fix", core.VerifyEvent{Kind: core.VerifyEvProgress, Phase: phase})
+		assert.Equal(t, "verify_"+string(phase), f.Phase)
+	}
+
+	finding := summarizeJobEvent("j1", "verify_fix", core.VerifyEvent{Kind: core.VerifyEvFinding, Finding: core.VerifyFinding{Status: "ok"}})
+	assert.Empty(t, finding.Phase)
+	unnamed := summarizeJobEvent("j1", "verify_fix", core.VerifyEvent{Kind: core.VerifyEvProgress})
+	assert.Empty(t, unnamed.Phase, "a tick naming no phase names none")
 }

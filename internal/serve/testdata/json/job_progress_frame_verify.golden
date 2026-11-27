@@ -1,0 +1,9 @@
+{
+  "job_id": "0123456789abcdef0123456789abcdef",
+  "kind": "verify_fix",
+  "type": "verify",
+  "op": "verify",
+  "phase": "verify_deployed",
+  "index": 1200,
+  "total": 23236
+}

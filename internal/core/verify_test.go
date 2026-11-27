@@ -713,13 +713,22 @@ func newEmptyDirSource(t *testing.T, sourceID, modID string) source.ModSource {
 // values down to core.VerifyEvent - the shape every test in this file
 // actually asserts against - dropping anything else (there is never
 // anything else, since Verify's sink only ever emits VerifyEvent, but the
-// sink is a core.EventSink and the recorder's slice is typed core.Event).
+// sink is a core.EventSink and the recorder's slice is typed core.Event),
+// and the later passes' progress ticks.
 func verifyEvents(recorded []core.Event) []core.VerifyEvent {
 	out := make([]core.VerifyEvent, 0, len(recorded))
 	for _, e := range recorded {
-		if ve, ok := e.(core.VerifyEvent); ok {
-			out = append(out, ve)
+		ve, ok := e.(core.VerifyEvent)
+		if !ok {
+			continue
 		}
+		// The later passes' phase ticks (#677) are pinned on their own,
+		// in verify_progress_phases_test.go; the sequences here are about
+		// the rows and the version pass's per-mod ticks.
+		if ve.Kind == core.VerifyEvProgress && ve.Phase != core.VerifyPhaseVersions {
+			continue
+		}
+		out = append(out, ve)
 	}
 	return out
 }

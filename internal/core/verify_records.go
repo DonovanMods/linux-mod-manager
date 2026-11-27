@@ -129,6 +129,7 @@ func adoptedInPlace(game *domain.Game, mod domain.InstalledMod) bool {
 // row - every other pass's tolerance: a verify that reports nothing because
 // one tier could not run is worse than one that says which did not.
 func (r *verifyRun) recordsPassTolerant(installedMods []domain.InstalledMod, files []DeployedFile) {
+	r.progress(VerifyPhaseRecords, 0, 0)
 	if err := r.recordsPass(installedMods, files); err != nil && r.ctx.Err() == nil {
 		r.result.Warnings++
 		r.finding(VerifyFinding{Status: "skipped", Note: fmt.Sprintf("records: %v", err)}, VerifyEvent{})

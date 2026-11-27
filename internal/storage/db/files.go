@@ -136,12 +136,10 @@ type DeployedFileState struct {
 	DeployedAt  time.Time
 }
 
-// DeployedFileStates returns every profile's record of relativePath in
-// gameID, sorted by profile - what a removal compares the file on disk
-// against (#466), including the method provenance that distinguishes a
-// replaced symlink (#483).
-func (d *DB) DeployedFileStates(ctx context.Context, gameID string, path domain.DeployPath) (states []DeployedFileState, err error) {
-	rows, err := d.QueryContext(ctx, `
+// deployedFileStatesQuery is DeployedFileStates' query: one path's records
+// in a game, every profile's. Searched through idx_deployed_files_path
+// (migrateV31), which also yields the profile order (#677).
+const deployedFileStatesQuery = `
 		SELECT df.profile_name, df.source_id, df.mod_id, df.mod_path,
 		       df.checksum, df.size, df.mtime, df.ctime, im.link_method,
 		       df.deployed_at
@@ -153,7 +151,14 @@ func (d *DB) DeployedFileStates(ctx context.Context, gameID string, path domain.
 		 AND im.mod_id = df.mod_id
 		WHERE df.game_id = ? AND df.root = ? AND df.relative_path = ?
 		ORDER BY df.profile_name
-	`, gameID, path.Root.String(), path.Rel)
+	`
+
+// DeployedFileStates returns every profile's record of relativePath in
+// gameID, sorted by profile - what a removal compares the file on disk
+// against (#466), including the method provenance that distinguishes a
+// replaced symlink (#483).
+func (d *DB) DeployedFileStates(ctx context.Context, gameID string, path domain.DeployPath) (states []DeployedFileState, err error) {
+	rows, err := d.QueryContext(ctx, deployedFileStatesQuery, gameID, path.Root.String(), path.Rel)
 	if err != nil {
 		return nil, fmt.Errorf("querying deployed file states: %w", err)
 	}

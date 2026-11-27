@@ -247,7 +247,10 @@ type jobProgressFrame struct {
 	Op   string `json:"op,omitempty"`
 
 	// Phase is core.FlowEvent.FlowPhase().String() - empty for the one
-	// event type that carries no phase (UpdateCheckEvent).
+	// event type that carries no phase (UpdateCheckEvent). A verify
+	// progress tick, which is no FlowEvent, carries its pass as
+	// "verify_" + core.VerifyPhase ("verify_deployed", #677): the prefix
+	// keeps it apart from every flow phase.
 	Phase string `json:"phase,omitempty"`
 
 	// Detail is the event's human-readable line: a step/mod/hook event's
@@ -295,6 +298,10 @@ func summarizeJobEvent(id jobID, kind string, e core.Event) jobProgressFrame {
 		frame.Phase = flow.FlowPhase().String()
 	}
 	switch ev := e.(type) {
+	case core.VerifyEvent:
+		if ev.Kind == core.VerifyEvProgress && ev.Phase != "" {
+			frame.Phase = verifyFramePhase(ev.Phase)
+		}
 	case core.StepEvent:
 		frame.Detail = ev.Detail
 		frame.FileIndex, frame.FileTotal = ev.FileIndex, ev.FileTotal
@@ -312,6 +319,10 @@ func summarizeJobEvent(id jobID, kind string, e core.Event) jobProgressFrame {
 	}
 	return frame
 }
+
+// verifyFramePhase is a verify pass's name on a job progress frame (#677):
+// the tray's row for a verify --fix job says which pass it is in.
+func verifyFramePhase(phase core.VerifyPhase) string { return "verify_" + string(phase) }
 
 // activityByteDeltaThreshold is the byte-delta gate's own "whole percent
 // changed": how many additional bytes a download whose total size is

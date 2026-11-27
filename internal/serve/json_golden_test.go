@@ -291,6 +291,20 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #677: a verify --fix job's progress tick names its pass
+			// (verify_ + core.VerifyPhase) and counts what that pass walks.
+			"job_progress_frame_verify",
+			jobProgressFrame{
+				JobID: "0123456789abcdef0123456789abcdef",
+				Kind:  "verify_fix",
+				Type:  "verify",
+				Op:    "verify",
+				Phase: verifyFramePhase(core.VerifyPhaseDeployed),
+				Index: 1200,
+				Total: 23236,
+			},
+		},
+		{
 			// One read_progress frame (#583): how far a GET that named a
 			// ?progress= token has got - the update check here, the Health
 			// card's verify the other Read value.
@@ -318,6 +332,20 @@ func TestServeJSONGoldens(t *testing.T) {
 				Index:   17,
 				Total:   42,
 				Notice:  "Rate limited by NexusMods; retrying in 30s (attempt 2 of 3).",
+			},
+		},
+		{
+			// #677: a verify's frame names the pass it is in; the
+			// deployed-content pass counts files, not mods.
+			"read_progress_frame_phase",
+			readProgressFrame{
+				Token:   "r1a2b3",
+				Read:    readHealth,
+				GameID:  "g1",
+				Profile: "default",
+				Phase:   string(core.VerifyPhaseDeployed),
+				Index:   1200,
+				Total:   23236,
 			},
 		},
 		{
