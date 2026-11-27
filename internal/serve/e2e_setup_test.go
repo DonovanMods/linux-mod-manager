@@ -1204,7 +1204,7 @@ func TestE2E_Setup_TabsDeepLinkAndAreKeyboardNavigable(t *testing.T) {
 
 	// ArrowRight from "sources" moves to and activates "archive" (the next
 	// tab in SECTIONS' own order: games, auth, sources, archive, adopt,
-	// updates).
+	// updates, storage).
 	f.runInBrowser(t,
 		chromedp.Focus(`[data-section="sources"]`, chromedp.ByQuery),
 		chromedp.KeyEvent(kb.ArrowRight),
@@ -1222,19 +1222,19 @@ func TestE2E_Setup_TabsDeepLinkAndAreKeyboardNavigable(t *testing.T) {
 	f.runInBrowser(t, chromedp.Evaluate(`document.activeElement.dataset.section`, &focused))
 	assert.Equal(t, "games", focused)
 
-	// End jumps to the last tab ("updates").
+	// End jumps to the last tab ("storage", #678).
 	f.runInBrowser(t,
 		chromedp.KeyEvent(kb.End),
-		chromedp.WaitVisible(`[data-testid="setup-updates"]`, chromedp.ByQuery),
+		chromedp.WaitVisible(`[data-testid="setup-storage"]`, chromedp.ByQuery),
 	)
 	f.runInBrowser(t, chromedp.Evaluate(`document.activeElement.dataset.section`, &focused))
-	assert.Equal(t, "updates", focused)
+	assert.Equal(t, "storage", focused)
 
 	// The single tabpanel's aria-labelledby tracks whichever tab is active.
 	var labelledBy string
 	f.runInBrowser(t, chromedp.AttributeValue(
 		`[role="tabpanel"]`, "aria-labelledby", &labelledBy, nil, chromedp.ByQuery))
-	assert.Equal(t, "setup-tab-updates", labelledBy)
+	assert.Equal(t, "setup-tab-storage", labelledBy)
 
 	assertNoUncaughtErrors(t, f.BrowserErrors())
 }

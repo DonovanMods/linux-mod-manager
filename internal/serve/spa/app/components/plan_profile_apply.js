@@ -15,6 +15,7 @@ import { html } from "../render.js";
 import { displayVersion, reinstallReason } from "../version.js";
 import { PlanOverrides } from "./planoverrides.js";
 import { PlanHandOffs } from "./planhandoffs.js";
+import { PlanCachePrune } from "./planprune.js";
 import { PlanStoredFiles } from "./planstoredfiles.js";
 import { UnresolvedWarning } from "./planwarnings.js";
 
@@ -164,6 +165,10 @@ export function ProfileApplyPlanView({ plan }) {
       <${PlanHandOffs}
         handoffs=${plan.handoffs}
         testID="profile-apply-handoffs"
+      />
+      <${PlanCachePrune}
+        summary=${plan.cache_prune}
+        testID="profile-apply-cache-prune"
       />
       <${PlanStoredFiles}
         heals=${plan.heals}

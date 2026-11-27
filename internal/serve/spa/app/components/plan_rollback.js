@@ -4,6 +4,7 @@
 import { html } from "../render.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 import { PlanHandOffs } from "./planhandoffs.js";
+import { PlanCachePrune } from "./planprune.js";
 
 /** RollbackPlanView renders core.RollbackPlan (internal/core/rollback.go). */
 export function RollbackPlanView({ plan, modal, actions }) {
@@ -29,6 +30,10 @@ export function RollbackPlanView({ plan, modal, actions }) {
         </p>`
       }
       <${PlanHandOffs} handoffs=${plan.handoffs} testID="rollback-handoffs" />
+      <${PlanCachePrune}
+        summary=${plan.cache_prune}
+        testID="rollback-cache-prune"
+      />
 
       <${PlanAdvanced}>
         <${ApplyOption}

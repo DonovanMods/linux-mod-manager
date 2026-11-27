@@ -804,6 +804,18 @@ export const getServiceStatus = () => get("/api/v1/service");
 export const putAutoUpdate = (enabled) =>
   put("/api/v1/settings/auto-update", { enabled });
 
+/** getCacheStatus reads GET /api/v1/cache (issue 678): core.CacheStatus
+ * for every game - the cache's size and what a prune frees. It reads every
+ * cached file's size. */
+export const getCacheStatus = () => get("/api/v1/cache");
+
+/** putCacheKeep writes config.yaml's cache.keep_previous_versions (issue
+ * 678; -1 is unlimited) and answers the core.CacheStatus it changes. */
+export const putCacheKeep = (keepPreviousVersions) =>
+  put("/api/v1/settings/cache", {
+    keep_previous_versions: keepPreviousVersions,
+  });
+
 /** postAutoUpdateNotice records that the web UI showed the automatic
  * update's notice (issue 586), so neither another browser nor the CLI shows
  * it again. */

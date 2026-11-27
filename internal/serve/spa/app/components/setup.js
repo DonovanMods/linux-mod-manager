@@ -19,6 +19,7 @@ import { SetupSources } from "./setupsources.js";
 import { SetupImportArchive } from "./setupimport.js";
 import { SetupAdopt } from "./setupadopt.js";
 import { SetupUpdates } from "./setupupdates.js";
+import { SetupStorage } from "./setupstorage.js";
 import { AwayBar } from "./awaybar.js";
 
 const SECTIONS = [
@@ -28,6 +29,7 @@ const SECTIONS = [
   { key: "archive", label: "Archive import" },
   { key: "adopt", label: "Adopt" },
   { key: "updates", label: "Updates" },
+  { key: "storage", label: "Storage" },
 ];
 
 export function SetupPage({ state, route, onThemeChange, actions }) {
@@ -166,6 +168,7 @@ export function SetupPage({ state, route, onThemeChange, actions }) {
         }
         ${section === "adopt" && html`<${SetupAdopt} state=${state} actions=${actions} />`}
         ${section === "updates" && html`<${SetupUpdates} />`}
+        ${section === "storage" && html`<${SetupStorage} state=${state} actions=${actions} game=${route.game} />`}
       </div>
     </main>
   `;

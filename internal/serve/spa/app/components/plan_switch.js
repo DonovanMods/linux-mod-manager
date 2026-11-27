@@ -20,6 +20,7 @@ import { codeSpans } from "../errortext.js";
 import { PlanWarnings, UnresolvedWarning } from "./planwarnings.js";
 import { PlanOverrides } from "./planoverrides.js";
 import { PlanHandOffs } from "./planhandoffs.js";
+import { PlanCachePrune } from "./planprune.js";
 import { PlanStoredFiles } from "./planstoredfiles.js";
 import { reinstallReason } from "../version.js";
 
@@ -154,6 +155,10 @@ export function SwitchPlanView({ plan }) {
       <${PlanOverrides} changes=${plan.overrides} testID="switch-overrides" />
       <${PlanHandOffs} handoffs=${plan.handoffs} testID="switch-handoffs" />
       <${PlanStoredFiles} heals=${plan.heals} testID="switch" />
+      <${PlanCachePrune}
+        summary=${plan.cache_prune}
+        testID="switch-cache-prune"
+      />
     </div>
   `;
 }

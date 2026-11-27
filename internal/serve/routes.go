@@ -35,6 +35,11 @@ func (s *Server) routes() {
 	// Setup > Updates' "Update automatically" switch (#586): a
 	// single-step config.yaml write, answered with the status above.
 	s.mux.Handle("PUT /api/v1/settings/auto-update", s.wrap(s.handleAPIAutoUpdateSetting))
+	// Setup > Storage (#678, api_cache.go): the cache's size and what a
+	// prune frees, and cache.keep_previous_versions - a single-step
+	// config.yaml write answered with that status.
+	s.mux.Handle("GET /api/v1/cache", s.wrap(s.handleAPICacheStatus))
+	s.mux.Handle("PUT /api/v1/settings/cache", s.wrap(s.handleAPICacheSetting))
 	// The web UI showed the automatic update's notice (#586): told once,
 	// for every frontend.
 	s.mux.Handle("POST /api/v1/updates/lmm/notice", s.wrapNoDB(s.handleAPIAutoUpdateNotice))

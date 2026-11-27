@@ -135,6 +135,7 @@ const mutationKindLabels = {
   snapshot_restore: "Restoring snapshot",
   mod_copy: "Copying to profile",
   catalog_relink: "Re-linking",
+  cache_prune: "Pruning the cache",
 };
 
 /** mutationLabel names a running job's KIND in words, falling back to the
@@ -163,6 +164,7 @@ export function mutationLabel(kind, origin) {
 // imported a collection.
 const jobKindTitles = {
   adopt: "Adopt",
+  cache_prune: "Cache prune",
   catalog_relink: "Re-link",
   collection_finish: "Finish collection",
   collection_update: "Collection update",

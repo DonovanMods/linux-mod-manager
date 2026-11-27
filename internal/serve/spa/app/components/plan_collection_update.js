@@ -26,6 +26,7 @@ import { displayVersion } from "../version.js";
 import { PlanWarnings } from "./planwarnings.js";
 import { SourceCollectionSection } from "./plan_profile_import.js";
 import { ReofferedSection } from "./gonepins.js";
+import { PlanCachePrune } from "./planprune.js";
 
 /** keyOf is an entry's "source:mod" key, the one the options name. */
 function keyOf(it) {
@@ -496,6 +497,10 @@ export function CollectionUpdatePlanView({ plan, modal, actions }) {
       </p>
       <p class="plan__note">From <span class="mono">${from}</span>.</p>
       <${PlanWarnings} warnings=${plan.warnings} testID="update-warnings" />
+      <${PlanCachePrune}
+        summary=${plan.cache_prune}
+        testID="collection-update-cache-prune"
+      />
       <${ReofferedSection} plan=${plan} actions=${actions} />
       ${
         plan.install_instructions &&

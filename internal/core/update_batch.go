@@ -54,6 +54,11 @@ type UpdateBatchPlan struct {
 	// ticked five boxes and sees four in the plan deserves to know which one
 	// went missing. Sorted, so a re-plan of the same selection is stable.
 	NotFound []string `json:"not_found,omitzero"`
+	// CachePrune is what the prunes that follow the updates free (#678):
+	// each updated mod's old cached versions beyond
+	// cache.keep_previous_versions. A prediction; absent when they free
+	// nothing.
+	CachePrune *CachePruneSummary `json:"cache_prune,omitempty"`
 	// snapshot is the installed-mod set this plan was computed against
 	// (Ruling 5): ApplyUpdateBatch re-derives it under beginOp and returns
 	// ErrStalePlan when it no longer matches. Unexported and outside the
@@ -255,6 +260,7 @@ func (s *Service) PlanUpdateBatchFrom(ctx context.Context, game *domain.Game, pr
 				plan.Updates = append(plan.Updates, upd)
 			}
 		}
+		plan.CachePrune = s.predictBatchPrune(ctx, game, profileName, plan.Updates)
 		return plan, nil
 	}
 
@@ -277,7 +283,25 @@ func (s *Service) PlanUpdateBatchFrom(ctx context.Context, game *domain.Game, pr
 			delete(wanted, key)
 		}
 	}
+	plan.CachePrune = s.predictBatchPrune(ctx, game, profileName, plan.Updates)
 	return plan, nil
+}
+
+// predictBatchPrune is predictCachePrune over a batch's updates: each
+// moves its row to the new version, rolling back to the old one. A locked
+// or external one is left out: its apply refuses it.
+func (s *Service) predictBatchPrune(ctx context.Context, game *domain.Game, profileName string, updates []domain.Update) *CachePruneSummary {
+	var changes []pruneChange
+	for _, upd := range updates {
+		if upd.Locked || upd.InstalledMod.External {
+			continue
+		}
+		changes = append(changes, pruneChange{
+			GameID: game.ID, Profile: profileName, SourceID: upd.InstalledMod.SourceID, ModID: upd.InstalledMod.ID,
+			Version: upd.NewVersion, Previous: upd.InstalledMod.Version,
+		})
+	}
+	return s.predictCachePrune(ctx, game, changes)
 }
 
 // ApplyUpdateBatch applies plan's selection.
