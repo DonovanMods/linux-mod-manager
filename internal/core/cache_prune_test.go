@@ -456,3 +456,54 @@ func TestCacheKeepPreviousVersions_ReadsConfigAtOpen(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, svc.Close()) })
 	assert.Equal(t, 7, svc.CacheKeepPreviousVersions())
 }
+
+// TestApplyProfileApply_PrunesWhatItInstalled: a profile apply that
+// installs a mod prunes that mod's old versions afterwards, as its plan
+// said.
+func TestApplyProfileApply_PrunesWhatItInstalled(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	pm := svc.NewProfileManager()
+	_, err := pm.Create(context.Background(), game.ID, "default")
+	require.NoError(t, err)
+	svc.RegisterSource(newTwoVersionSource(t))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "default", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	seedVersions(t, svc, game, "src", "mod1", "0.1", "0.2", "0.3", "0.4", "0.5")
+
+	plan, err := svc.PlanProfileApply(context.Background(), game, "default")
+	require.NoError(t, err)
+	require.NotNil(t, plan.CachePrune)
+	assert.Equal(t, 2, plan.CachePrune.Versions)
+
+	result, err := svc.ApplyProfileApply(context.Background(), game, plan, core.ProfileApplyOptions{}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result.CachePruned)
+	assert.Equal(t, []string{"0.2", "0.1"}, prunedVersions(result.CachePruned.Entries))
+	assert.Equal(t, []string{"0.3", "0.4", "0.5"}, cachedVersions(t, svc, game, "src", "mod1", "0.1", "0.2", "0.3", "0.4", "0.5"))
+}
+
+// TestApplyProfileSwitch_PrunesWhatItInstalled: a switch that installs a
+// mod prunes that mod's old versions afterwards, as its plan said.
+func TestApplyProfileSwitch_PrunesWhatItInstalled(t *testing.T) {
+	svc := newFlowsTestService(t)
+	game := &domain.Game{ID: "g1", Name: "Game", ModPath: t.TempDir(), LinkMethod: domain.LinkSymlink}
+	pm := svc.NewProfileManager()
+	for _, name := range []string{"default", "other"} {
+		_, err := pm.Create(context.Background(), game.ID, name)
+		require.NoError(t, err)
+	}
+	require.NoError(t, pm.SetDefault(context.Background(), game.ID, "default"))
+	svc.RegisterSource(newTwoVersionSource(t))
+	require.NoError(t, pm.AddMod(context.Background(), game.ID, "other", domain.ModReference{SourceID: "src", ModID: "mod1", Version: "1.0"}))
+	seedVersions(t, svc, game, "src", "mod1", "0.1", "0.2", "0.3", "0.4", "0.5")
+
+	plan, err := svc.PlanProfileSwitch(context.Background(), game, "other")
+	require.NoError(t, err)
+	require.NotNil(t, plan.CachePrune)
+	assert.Equal(t, 2, plan.CachePrune.Versions)
+
+	result, err := svc.ApplyProfileSwitch(context.Background(), game, plan, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result.CachePruned)
+	assert.Equal(t, []string{"0.3", "0.4", "0.5"}, cachedVersions(t, svc, game, "src", "mod1", "0.1", "0.2", "0.3", "0.4", "0.5"))
+}
