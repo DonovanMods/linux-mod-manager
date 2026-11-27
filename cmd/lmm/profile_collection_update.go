@@ -466,6 +466,10 @@ func printCollectionUpdatePlan(plan *core.CollectionUpdatePlan, game *domain.Gam
 	if plan.RecordedOnly {
 		fmt.Printf("\n%s is not the active profile (%s is): the update records and downloads, and deploys nothing.\n", plan.Profile, plan.ActiveProfile)
 	}
+	if plan.CachePrune != nil {
+		fmt.Println()
+		printCachePrunePreview("", plan.CachePrune) // #678
+	}
 	fmt.Println()
 }
 
@@ -485,6 +489,7 @@ func printCollectionUpdateResult(r *core.CollectionUpdateResult) {
 	if r.Conflicts > 0 {
 		fmt.Printf("  Kept your version of %d mod(s) the collection changed.\n", r.Conflicts)
 	}
+	printCachePruned("  ", r.CachePruned) // #678
 	if imp := r.Import; imp != nil {
 		for _, n := range imp.Notes {
 			if !strings.HasPrefix(n, "Warning:") {

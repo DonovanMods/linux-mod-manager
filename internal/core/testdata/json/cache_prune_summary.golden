@@ -1,0 +1,14 @@
+{
+  "versions": 1,
+  "bytes": 2048,
+  "entries": [
+    {
+      "game_id": "skyrim-se",
+      "source_id": "nexusmods",
+      "mod_id": "12345",
+      "mod_name": "SkyUI",
+      "version": "5.1",
+      "bytes": 2048
+    }
+  ]
+}

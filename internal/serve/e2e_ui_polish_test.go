@@ -225,8 +225,8 @@ func TestE2E_SetupTabsKeepTheirWidths(t *testing.T) {
 			faceInEffect(face),
 			chromedp.Evaluate(tabWidths, &initial),
 		)
-		require.Len(t, initial, 6)
-		for _, section := range []string{"auth", "sources", "archive", "adopt", "updates", "games"} {
+		require.Len(t, initial, 7)
+		for _, section := range []string{"auth", "sources", "archive", "adopt", "updates", "storage", "games"} {
 			var now []float64
 			f.runInBrowser(t,
 				clickWhenSettled(`.setup-nav__tab[data-section="`+section+`"]`),

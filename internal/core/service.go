@@ -2014,6 +2014,12 @@ func commitStagedCache(k cache.Key, cachePath, stagePath string) error {
 	if err := cache.StampKey(stagePath, k); err != nil {
 		return err
 	}
+	// #678: the entry's first commit time stands across every later
+	// commit to it, so the cache prune ranks versions by when they were
+	// cached, not by when an entry was last touched.
+	if err := cache.CarryCommitted(stagePath, cachePath, time.Now()); err != nil {
+		return err
+	}
 	parentDir := filepath.Dir(cachePath)
 	if err := os.MkdirAll(parentDir, 0755); err != nil {
 		return fmt.Errorf("creating cache parent directory: %w", err)

@@ -520,6 +520,14 @@ var dialogScenarios = []dialogScenario{
 				clickWhenSettled(`[data-action="plan-adopt"]`),
 				planOpen("adopt")}
 		}},
+	// #678: Setup > Storage's prune preview (an empty cache: "Nothing to
+	// prune" is still the modal's whole control set).
+	{name: "cache_prune", fixture: "copyable", root: `.modal[data-kind="cache_prune"]`,
+		open: func(f dialogFixture) chromedp.Tasks {
+			return chromedp.Tasks{chromedp.Navigate(f.SetupPath("storage")),
+				clickWhenSettled(`[data-action="plan-cache-prune-all"]`),
+				planOpen("cache_prune")}
+		}},
 	{name: "workshop_adopt", fixture: "workshop", root: `.modal[data-kind="workshop_adopt"]`,
 		open: func(f dialogFixture) chromedp.Tasks {
 			return chromedp.Tasks{chromedp.Navigate(f.SetupPath("adopt")),

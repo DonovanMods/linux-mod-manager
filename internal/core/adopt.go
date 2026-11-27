@@ -30,6 +30,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/domain"
 	"github.com/DonovanMods/linux-mod-manager/v2/internal/source"
@@ -674,10 +675,20 @@ func (s *Service) adoptScannedMod(ctx context.Context, game *domain.Game, r Scan
 		if err := gameCache.Claim(entryKey); err != nil {
 			return err
 		}
+		// #678: an entry already there keeps when it was first committed
+		// (its stamp, or its modification time before the writes below
+		// move it); a new one is committed now.
+		committed, existed := cache.PreviousCommit(cachePath)
+		if !existed {
+			committed = time.Now()
+		}
 		if err := os.MkdirAll(cachePath, 0755); err != nil {
 			return fmt.Errorf("creating cache: %w", err)
 		}
 		if err := cache.StampKey(cachePath, entryKey); err != nil {
+			return err
+		}
+		if err := cache.MarkCommitted(cachePath, committed); err != nil {
 			return err
 		}
 

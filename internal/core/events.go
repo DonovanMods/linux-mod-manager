@@ -74,6 +74,9 @@ const (
 	// engine, so it emits the Import* phase family; Scope.Op tells it
 	// apart.
 	OpCollectionFinish Op = "collection_finish"
+	// OpCachePrune is `lmm cache prune` - removing old cached versions of
+	// mods (#678). A flow's own prune afterwards keeps the flow's Op.
+	OpCachePrune Op = "cache_prune"
 )
 
 // Scope is embedded in every event: which operation, which mod (if any),

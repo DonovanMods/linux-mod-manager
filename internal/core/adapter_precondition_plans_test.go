@@ -231,6 +231,10 @@ var adapterExemptPlans = map[string]string{
 	// profile's load_orders: list and the game's list file - and only a
 	// FileLoadOrderer adapter has one.
 	"PlanFileLoadOrderEdit": "TestFileLoadOrderEditIsNoDeployUnderARefusingAdapter",
+	// #678: a cache prune deploys nothing - it removes old cached versions
+	// no profile or snapshot references - and a game whose adapter refuses
+	// still has a cache to clear.
+	"PlanCachePrune": "TestRemovalPlansIgnoreTheAdapterPrecondition/cache_prune",
 }
 
 // TestFileLoadOrderEditIsNoDeployUnderARefusingAdapter pins
@@ -298,6 +302,19 @@ func TestRemovalPlansIgnoreTheAdapterPrecondition(t *testing.T) {
 		require.NoError(t, err)
 		_, err = svc.GetInstalledMod(ctx, "acme", "m1", game.ID, "default")
 		assert.Error(t, err, "the record is gone")
+	})
+
+	t.Run("cache_prune", func(t *testing.T) {
+		svc, game, _ := newPreconditionFixture(t)
+		setKeepPrevious(t, svc, "0")
+		seedVersions(t, svc, game, "acme", "old", "1.0", "2.0")
+		seedRow(t, svc, game, "other", "acme", "old", "3.0", "")
+		plan, err := svc.PlanCachePrune(ctx, []*domain.Game{game}, core.CachePruneOptions{})
+		require.NoError(t, err)
+		require.Len(t, plan.Entries, 2)
+		res, err := svc.ApplyCachePrune(ctx, plan, nil)
+		require.NoError(t, err)
+		assert.Equal(t, 2, res.Versions)
 	})
 }
 

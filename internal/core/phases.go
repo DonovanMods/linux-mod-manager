@@ -1011,6 +1011,21 @@ const (
 	// to make the imported profile the active one. ModName names that
 	// profile. The switch's own steps follow (OpSwitch's Switch* phases).
 	ImportSwitching
+
+	// --- The cache prune (#678): `lmm cache prune`, and the prune a flow
+	// that changes versions runs after its work, under the flow's own
+	// Scope.Op. ---
+
+	// CachePruneRemoved fires once per cache entry removed. ModName names
+	// the mod, Version the version; Index/Total count the entries.
+	CachePruneRemoved
+	// CachePruneWarning is an entry the prune could not remove, or a cache
+	// it left whole because something that could reference a version could
+	// not be read. Never fatal. Message is the raw text.
+	CachePruneWarning
+	// CachePruneDone fires once after a flow's own prune removed
+	// something. Detail is the sentence: "freed 1.2 GiB (2 old versions)".
+	CachePruneDone
 )
 
 // deployPhaseNames maps each DeployPhase to its wire name (snake_case of
@@ -1080,6 +1095,9 @@ var deployPhaseNames = [...]string{
 	UpdateModUpdated: "update_mod_updated",
 
 	ImportSwitching: "import_switching",
+
+	CachePruneRemoved: "cache_prune_removed", CachePruneWarning: "cache_prune_warning",
+	CachePruneDone: "cache_prune_done",
 }
 
 // String returns the phase's wire name.

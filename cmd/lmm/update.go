@@ -1129,6 +1129,8 @@ func batchProgress(service *core.Service, updates []domain.Update) func(core.Eve
 			}
 		case core.UpdateBeforeEachForced, core.UpdateWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		case core.CachePruneWarning, core.CachePruneDone, core.CachePruneRemoved:
+			cachePruneLine(p) // #678
 		case core.UpdateNote:
 			if verbose && !jsonOutput {
 				fmt.Printf("  %s\n", p.Detail)
@@ -1295,6 +1297,7 @@ func applySingleUpdateFromSource(ctx context.Context, service *core.Service, gam
 
 		if !jsonOutput {
 			fmt.Printf("Updating %s %s → %s...\n", plan.Mod.Name, oldDisplay, newDisplay)
+			printCachePrunePreview("  ", plan.CachePrune) // #678
 			if plan.Update.Changelog != "" {
 				cl := plan.Changelog
 				const maxChangelog = 500
@@ -1399,6 +1402,8 @@ func updateProgress(e core.Event) {
 		}
 	case core.UpdateBeforeEachForced, core.UpdateWarning:
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+	case core.CachePruneWarning, core.CachePruneDone, core.CachePruneRemoved:
+		cachePruneLine(p) // #678
 	case core.UpdateNote:
 		if verbose && !jsonOutput {
 			fmt.Printf("  %s\n", p.Detail)
@@ -1576,7 +1581,8 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 	if !jsonOutput {
 		fmt.Printf("Rolling back %s %s → %s...\n", plan.Mod.Name,
 			displayModVersion(wv, plan.FromVersion, plan.Mod.UpdatedAt), displayRollbackTarget(wv, plan.ToVersion))
-		printHandOffs("  ", plan.Handoffs) // #638
+		printHandOffs("  ", plan.Handoffs)            // #638
+		printCachePrunePreview("  ", plan.CachePrune) // #678
 	}
 
 	opts := core.RollbackOptions{
@@ -1592,6 +1598,8 @@ func doUpdateRollback(ctx context.Context, service *core.Service, game *domain.G
 		switch p.Phase {
 		case core.UpdateBeforeEachForced, core.UpdateWarning:
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", p.Detail)
+		case core.CachePruneWarning, core.CachePruneDone, core.CachePruneRemoved:
+			cachePruneLine(p) // #678
 		case core.UpdateNote:
 			if verbose && !jsonOutput {
 				fmt.Printf("  %s\n", p.Detail)

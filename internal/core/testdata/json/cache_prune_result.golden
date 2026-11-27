@@ -1,0 +1,17 @@
+{
+  "entries": [
+    {
+      "game_id": "skyrim-se",
+      "source_id": "nexusmods",
+      "mod_id": "12345",
+      "mod_name": "SkyUI",
+      "version": "5.1",
+      "bytes": 2048
+    }
+  ],
+  "versions": 1,
+  "bytes": 2048,
+  "warnings": [
+    "could not prune version 0.9 of Other Mod from the cache: permission denied"
+  ]
+}

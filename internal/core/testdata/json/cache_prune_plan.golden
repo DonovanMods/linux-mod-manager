@@ -1,0 +1,44 @@
+{
+  "keep_previous_versions": 3,
+  "games": [
+    "skyrim-se",
+    "wow"
+  ],
+  "entries": [
+    {
+      "game_id": "skyrim-se",
+      "source_id": "nexusmods",
+      "mod_id": "12345",
+      "mod_name": "SkyUI",
+      "version": "5.1",
+      "bytes": 2048
+    },
+    {
+      "game_id": "skyrim-se",
+      "source_id": "nexusmods",
+      "mod_id": "12345",
+      "mod_name": "SkyUI",
+      "version": "5.0",
+      "variant": "abcdef123456",
+      "bytes": 1024
+    }
+  ],
+  "versions": 2,
+  "bytes": 3072,
+  "skipped": [
+    {
+      "game_id": "wow",
+      "reason": "reading profile raid of wow: yaml: line 3: did not find expected key"
+    }
+  ],
+  "include_uninstalled": true,
+  "uninstalled": [
+    {
+      "game_id": "skyrim-se",
+      "source_id": "nexusmods",
+      "mod_id": "999",
+      "versions": 2,
+      "bytes": 4096
+    }
+  ]
+}

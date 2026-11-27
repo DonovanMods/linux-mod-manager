@@ -439,6 +439,69 @@ func (d *DB) ModVersionRows(ctx context.Context, sourceID, modID string) (out []
 	return out, rows.Err()
 }
 
+// InstalledGameIDs returns every game ID an installed row names, sorted -
+// configured games and ones games.yaml no longer lists alike (#678: a
+// removed game's rows still reference cache entries).
+func (d *DB) InstalledGameIDs(ctx context.Context) (out []string, err error) {
+	rows, err := d.QueryContext(ctx, `SELECT DISTINCT game_id FROM installed_mods ORDER BY game_id`)
+	if err != nil {
+		return nil, fmt.Errorf("querying installed games: %w", err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = cerr
+		}
+	}()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning an installed game: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// GameVersionRow is one installed row of a game (#678): the mod it is and
+// the versions it names.
+type GameVersionRow struct {
+	SourceID string
+	ModID    string
+	// Name is the mod's display name.
+	Name string
+	ModVersionRow
+}
+
+// GameVersionRows returns every installed row of gameID, in every profile,
+// ordered by profile, source and mod: the versions the cache prune never
+// removes.
+func (d *DB) GameVersionRows(ctx context.Context, gameID string) (out []GameVersionRow, err error) {
+	rows, err := d.QueryContext(ctx, `
+		SELECT source_id, mod_id, name, game_id, profile_name, version, COALESCE(previous_version, ''), variant, previous_variant
+		FROM installed_mods
+		WHERE game_id = ?
+		ORDER BY profile_name, source_id, mod_id
+	`, gameID)
+	if err != nil {
+		return nil, fmt.Errorf("querying the installed rows of %s: %w", gameID, err)
+	}
+	defer func() {
+		if cerr := rows.Close(); err == nil && cerr != nil {
+			err = cerr
+		}
+	}()
+	for rows.Next() {
+		var row GameVersionRow
+		if err := rows.Scan(&row.SourceID, &row.ModID, &row.Name, &row.GameID, &row.Profile, &row.Version, &row.PreviousVersion, &row.Variant, &row.PreviousVariant); err != nil {
+			return nil, fmt.Errorf("scanning an installed row of %s: %w", gameID, err)
+		}
+		row.Version = domain.SanitizeLine(row.Version) // #594
+		row.PreviousVersion = domain.SanitizeLine(row.PreviousVersion)
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // getModFileIDsBatch returns file IDs for all mods in game/profile, keyed by "sourceID:modID"
 func (d *DB) getModFileIDsBatch(ctx context.Context, gameID, profileName string) (out map[string][]string, err error) {
 	rows, err := d.QueryContext(ctx, `

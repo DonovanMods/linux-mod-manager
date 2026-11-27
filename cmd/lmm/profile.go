@@ -787,8 +787,9 @@ func runSwitch(ctx context.Context, service *core.Service, game *domain.Game, ta
 			}
 		}
 		printOverrideChanges(plan.Overrides)
-		printHandOffs("", plan.Handoffs)      // #638
-		printStoredFiles("", plan.Heals, nil) // #662
+		printHandOffs("", plan.Handoffs)            // #638
+		printStoredFiles("", plan.Heals, nil)       // #662
+		printCachePrunePreview("", plan.CachePrune) // #678
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.
@@ -855,6 +856,7 @@ func runSwitch(ctx context.Context, service *core.Service, game *domain.Game, ta
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
+	printCachePruned("", result.CachePruned) // #678
 	fmt.Printf("\n✓ Switched to profile: %s\n", targetName)
 	return nil
 }
@@ -2078,6 +2080,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		printOverrideChanges(plan.Overrides)
 		printHandOffs("", plan.Handoffs)                    // #638
 		printStoredFiles("", plan.Heals, plan.CuratorMixed) // #662
+		printCachePrunePreview("", plan.CachePrune)         // #678
 	}
 
 	// A dry run stops here: it has shown the plan and must change nothing.
@@ -2199,6 +2202,7 @@ func doProfileApply(ctx context.Context, service *core.Service, game *domain.Gam
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
+	printCachePruned("", result.CachePruned) // #678
 	fmt.Printf("\n✓ Applied profile: %s\n", profileName)
 	return nil
 }

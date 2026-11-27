@@ -790,6 +790,9 @@ func (c *Cache) CopyModAs(ctx context.Context, k Key, destSourceID, destModID st
 			return err
 		}
 	}
+	if err := CarryCommittedFrom(tmp, c.ModPath(k)); err != nil {
+		return err
+	}
 	if err := os.Chmod(tmp, 0755); err != nil {
 		return fmt.Errorf("opening cache copy: %w", err)
 	}
@@ -847,6 +850,9 @@ func (c *Cache) PublishMod(ctx context.Context, dest *Cache, k Key) (err error) 
 		return fmt.Errorf("opening cache copy: %w", err)
 	}
 	if err := StampKey(tmp, k); err != nil {
+		return err
+	}
+	if err := CarryCommittedFrom(tmp, c.ModPath(k)); err != nil {
 		return err
 	}
 	// The replaced entry waits under a reserved name that says which entry

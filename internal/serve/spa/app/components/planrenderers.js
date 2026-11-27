@@ -44,6 +44,7 @@ import { SnapshotRestorePlanView } from "./plan_snapshot_restore.js";
 import { CollectionUpdatePlanView } from "./plan_collection_update.js";
 import { ProfileFillPlanView } from "./plan_profile_fill.js";
 import { CollectionFinishPlanView } from "./plan_collection_finish.js";
+import { CachePrunePlanView } from "./plan_cache_prune.js";
 
 // issue 332 (issue 330 carry-2's own promise kept): "updates", "verify_fix" and
 // "profile_import" each get their real renderer here, replacing the
@@ -93,6 +94,9 @@ const renderers = {
   // single-step writes with nothing to preview (api_snapshots.go), so
   // they have no plan kind and need no renderer.
   snapshot_restore: SnapshotRestorePlanView,
+  // issue 678: Setup > Storage's "Prune…" - every version it removes, with
+  // its size.
+  cache_prune: CachePrunePlanView,
 };
 
 /** GenericPlanView is the fallback: the plan document, rendered as data. */

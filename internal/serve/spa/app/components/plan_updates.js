@@ -29,6 +29,7 @@ import {
 } from "../modrows.js";
 import { displayVersion, displayUpdateTarget } from "../version.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
+import { PlanCachePrune } from "./planprune.js";
 
 /** rowKey identifies one UpdateBatchPlan row - the same "source:id" key
  * the plan's own request/mods took, and NotFound already reports in. */
@@ -178,6 +179,10 @@ export function UpdatesBatchPlanView({ plan, modal, actions }) {
           </section>
         `
       }
+      <${PlanCachePrune}
+        summary=${plan.cache_prune}
+        testID="updates-cache-prune"
+      />
 
       <${PlanAdvanced}>
         <${ApplyOption}

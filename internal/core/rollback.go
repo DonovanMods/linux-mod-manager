@@ -64,6 +64,11 @@ type RollbackPlan struct {
 	// load order, because the previous version does not ship it (#638).
 	// Additive; absent when there are none.
 	Handoffs []HandOff `json:"handoffs,omitempty"`
+	// CachePrune is what the prune that follows the rollback frees
+	// (#678): the mod's old cached versions beyond
+	// cache.keep_previous_versions, once the rolled-away-from version is
+	// the one it rolls back to. Absent when it frees nothing.
+	CachePrune *CachePruneSummary `json:"cache_prune,omitempty"`
 	// snapshot is the installed-mod set this plan was computed against
 	// (Ruling 5): ApplyRollback re-derives it under beginOp and returns
 	// ErrStalePlan when it no longer matches. Unexported and outside the
@@ -139,6 +144,12 @@ func (s *Service) PlanRollback(ctx context.Context, game *domain.Game, profileNa
 	plan.CacheMissing = !s.rollbackTargetHolds(ctx, game, mod)
 	if !plan.CacheMissing {
 		plan.Handoffs = s.planRollbackHandOffs(ctx, game, mod)
+	}
+	if !plan.CacheMissing && !plan.Locked {
+		plan.CachePrune = s.predictCachePrune(ctx, game, []pruneChange{{
+			GameID: game.ID, Profile: profileName, SourceID: mod.SourceID, ModID: mod.ID,
+			Version: mod.PreviousVersion, Previous: mod.Version,
+		}})
 	}
 
 	return plan, nil
@@ -222,6 +233,9 @@ type RollbackResult struct {
 	Reason      string              `json:"reason,omitempty"`
 	Warnings    []string            `json:"warnings,omitempty"`
 	Notes       []string            `json:"notes,omitempty"`
+	// CachePruned is what the prune after the rollback removed (#678).
+	// Absent when it removed nothing.
+	CachePruned *CachePruneSummary `json:"cache_pruned,omitempty"`
 }
 
 // ApplyRollback rolls plan.Mod back to its PreviousVersion, following
@@ -498,6 +512,11 @@ func (s *Service) applyRollback(ctx context.Context, game *domain.Game, plan *Ro
 	// rollback is a job with an event stream). Drained here exactly as
 	// applyUpdate does it.
 	s.takeCaptureWarnings(game.ID, OpRollback, UpdateWarning, &result.Warnings, emit)
+
+	// #678: the mod's old versions beyond the setting go. Never fatal.
+	pruned, pruneWarnings := s.pruneAfterFlow(ctx, game, []domain.ModReference{{SourceID: mod.SourceID, ModID: mod.ID}}, Scope{Op: OpRollback}, EventSink(emit))
+	result.CachePruned = pruned
+	result.Warnings = append(result.Warnings, pruneWarnings...)
 
 	return result, nil
 }

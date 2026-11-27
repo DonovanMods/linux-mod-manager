@@ -150,6 +150,9 @@ type UpdateFromArchivePlan struct {
 	// load order, because the new version does not ship it (#638).
 	// Additive; absent when there are none.
 	Handoffs []HandOff `json:"handoffs,omitempty"`
+	// CachePrune is what the prune that follows the update frees (#678),
+	// as UpdatePlan.CachePrune.
+	CachePrune *CachePruneSummary `json:"cache_prune,omitempty"`
 
 	// matchedFileID is the file whose completion marker Apply stamps.
 	matchedFileID string `json:"-"`
@@ -326,6 +329,12 @@ func (s *Service) PlanUpdateFromArchive(ctx context.Context, game *domain.Game, 
 	plan.Hooks = updateHookNames(s.resolvedHooksForPlan(ctx, game, profileName), opts.SkipHooks)
 	if plan.snapshot, err = s.currentInstalledSnapshot(ctx, game.ID, profileName); err != nil {
 		return nil, err
+	}
+	if !plan.Locked {
+		plan.CachePrune = s.predictCachePrune(ctx, game, []pruneChange{{
+			GameID: game.ID, Profile: profileName, SourceID: plan.Mod.SourceID, ModID: plan.Mod.ID,
+			Version: plan.ToVersion, Previous: plan.FromVersion,
+		}})
 	}
 	return plan, nil
 }

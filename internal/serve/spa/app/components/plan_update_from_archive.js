@@ -16,6 +16,7 @@
 import { html, useState } from "../render.js";
 import { PlanAdvanced, ApplyOption } from "./planoptions.js";
 import { PlanHandOffs } from "./planhandoffs.js";
+import { PlanCachePrune } from "./planprune.js";
 import { useSourceName } from "../sourcenames.js";
 
 function matchSentence(plan, sourceName) {
@@ -106,6 +107,10 @@ export function UpdateFromArchivePlanView({ plan, modal, actions }) {
       <${PlanHandOffs}
         handoffs=${plan.handoffs}
         testID="update-from-archive-handoffs"
+      />
+      <${PlanCachePrune}
+        summary=${plan.cache_prune}
+        testID="update-from-archive-cache-prune"
       />
       ${
         hooks.length > 0 &&

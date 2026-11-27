@@ -396,6 +396,17 @@ func TestServeJSONGoldens(t *testing.T) {
 			autoUpdateRequest{Enabled: new(false)},
 		},
 		{
+			// PUT /api/v1/settings/cache's body (#678): Setup > Storage's
+			// setting; -1 is unlimited.
+			"cache_setting_request",
+			cacheSettingRequest{KeepPreviousVersions: new(3)},
+		},
+		{
+			// POST /api/v1/plans/cache_prune's body (#678).
+			"cache_prune_plan_request",
+			cachePrunePlanRequest{AllGames: true, IncludeUninstalled: true},
+		},
+		{
 			"job_start_response",
 			newJobStartResponse("fedcba9876543210fedcba9876543210"),
 		},

@@ -138,6 +138,8 @@ export const RESULT_WARNING_KINDS = new Set([
   "collection_update",
   // Issue 660: finishing a collection - what its installs said.
   "collection_finish",
+  // Issue 678: a cache prune - a version it could not remove.
+  "cache_prune",
 ]);
 // PLUGIN_LIST_KINDS are the job kinds whose result has a `plugins` field.
 const PLUGIN_LIST_KINDS = new Set(["deploy", "purge"]);
