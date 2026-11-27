@@ -131,6 +131,7 @@ func (d *DB) migrations() []func(context.Context, migrationExec) error {
 		migrateV28,
 		migrateV29,
 		migrateV30,
+		migrateV31,
 	}
 }
 
@@ -894,6 +895,23 @@ func migrateV30(ctx context.Context, d migrationExec) error {
 			format INTEGER NOT NULL DEFAULT 0,
 			PRIMARY KEY (source_id, game_id, mod_id)
 		)
+	`)
+	return err
+}
+
+// migrateV31 indexes deployed_files by path (#677): game, root and
+// relative path, then profile. Every deployed-file judgement - a deploy's,
+// a purge's, verify's deployed-content pass - looks up one path's records
+// in a game, every profile's (DeployedFileStates), and the primary key
+// leads with profile_name, so such a lookup could use only its game_id
+// prefix and scanned the game's every row: a pass over a game's 23k paths
+// spent about 40 seconds in it. profile_name last also gives the lookup's
+// ORDER BY, which is what makes the planner choose this index without
+// ANALYZE; a three-column index lost to the primary key's free ordering.
+func migrateV31(ctx context.Context, d migrationExec) error {
+	_, err := d.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_deployed_files_path
+		ON deployed_files (game_id, root, relative_path, profile_name)
 	`)
 	return err
 }
