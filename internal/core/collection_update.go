@@ -329,6 +329,11 @@ type CollectionUpdatePlan struct {
 	// active one: the update records and downloads, and deploys nothing.
 	RecordedOnly  bool   `json:"recorded_only,omitzero"`
 	ActiveProfile string `json:"active_profile,omitempty"`
+	// CachePrune is what the prune that follows the update frees (#678):
+	// old cached versions, beyond cache.keep_previous_versions, of the
+	// members it moves to another version. A prediction; absent when it
+	// frees nothing.
+	CachePrune *CachePruneSummary `json:"cache_prune,omitempty"`
 
 	// base is the profile as planned: Apply refuses (ErrStalePlan) when
 	// it changed since.
@@ -414,6 +419,10 @@ type CollectionUpdateResult struct {
 	Import *ProfileImportResult `json:"import,omitempty"`
 	// Warnings are what the removals and the cache clean-up could not do.
 	Warnings []string `json:"warnings,omitempty"`
+	// CachePruned is what the prune after the update removed (#678): old
+	// cached versions of the members it changed. Absent when it removed
+	// nothing.
+	CachePruned *CachePruneSummary `json:"cache_pruned,omitempty"`
 }
 
 // collectionOrigin is where a profile's collection updates from.
@@ -701,7 +710,22 @@ func (s *Service) PlanCollectionUpdate(ctx context.Context, game *domain.Game, r
 		return nil, err
 	}
 	plan.RecordedOnly, plan.ActiveProfile = recordedOnly, live
+	plan.CachePrune = s.predictCachePrune(ctx, game, collectionChanges(game.ID, plan))
 	return plan, nil
+}
+
+// collectionChanges is a collection update's version changes as prune
+// changes, for its prediction: each changed member rolls back to the
+// version it had (the prediction errs toward freeing less), each added one
+// is new.
+func collectionChanges(gameID string, plan *CollectionUpdatePlan) []pruneChange {
+	var out []pruneChange
+	for _, it := range plan.Changed {
+		if it.NewVersion != "" && it.NewVersion != it.Version {
+			out = append(out, pruneChange{GameID: gameID, Profile: plan.Profile, SourceID: it.SourceID, ModID: it.ModID, Version: it.NewVersion, Previous: it.Version})
+		}
+	}
+	return out
 }
 
 // convertForUpdate converts origin's source collection at its newest
@@ -1308,6 +1332,15 @@ func (s *Service) ApplyCollectionUpdate(ctx context.Context, game *domain.Game, 
 			result.Warnings = append(result.Warnings, w)
 		}
 	}
+	// #678: the changed members' old versions go. Never fatal; what a
+	// member that did not change keeps is its own installed row's.
+	var changed []domain.ModReference
+	for _, it := range plan.Changed {
+		changed = append(changed, domain.ModReference{SourceID: it.SourceID, ModID: it.ModID})
+	}
+	pruned, pruneWarnings := s.pruneAfterFlow(ctx, game, changed, Scope{Op: OpImport}, sink)
+	result.CachePruned = pruned
+	result.Warnings = append(result.Warnings, pruneWarnings...)
 	return result, err
 }
 

@@ -506,6 +506,11 @@ type UpdatePlan struct {
 	// moving the lock to the target version leaves it refusing, so naming
 	// that remedy would be false guidance (unit Q review, I1).
 	Refusal string `json:"refusal,omitempty"`
+	// CachePrune is what the prune that follows the update frees (#678):
+	// the mod's old cached versions beyond cache.keep_previous_versions.
+	// A prediction; the result's CachePruned says what it freed. Absent
+	// when it frees nothing.
+	CachePrune *CachePruneSummary `json:"cache_prune,omitempty"`
 	// snapshot is the installed-mod set this plan was computed against
 	// (Ruling 5): ApplyUpdate re-derives it under beginOp and returns
 	// ErrStalePlan when it no longer matches. Unexported and outside the
@@ -646,6 +651,12 @@ func (s *Service) planUpdateFrom(ctx context.Context, game *domain.Game, profile
 		// wording wins over the external one when both apply.
 		ref := &domain.ModReference{Version: plan.LockedVersion}
 		plan.Refusal = lockedRefUnlockOnlyMessage(mod.Mod, profileName, ref)
+	}
+	if !plan.Locked && !plan.External {
+		plan.CachePrune = s.predictCachePrune(ctx, game, []pruneChange{{
+			GameID: game.ID, Profile: profileName, SourceID: mod.SourceID, ModID: mod.ID,
+			Version: upd.NewVersion, Previous: mod.Version,
+		}})
 	}
 
 	return plan, nil
@@ -796,6 +807,10 @@ type UpdateApplyResult struct {
 	// UpdateBatchOptions.Fomod (or a single update's UpdateOptions.Fomod).
 	// omitempty.
 	FomodChoicesRequired *FomodChoicesRequiredError `json:"fomod_choices_required,omitempty"`
+	// CachePruned is what the prune after the update removed (#678): the
+	// mod's old cached versions beyond cache.keep_previous_versions.
+	// Absent when it removed nothing.
+	CachePruned *CachePruneSummary `json:"cache_pruned,omitempty"`
 }
 
 // ErrModLocked reports an update apply refused because the profile ref is
@@ -1422,6 +1437,12 @@ func (s *Service) commitUpdate(ctx context.Context, game *domain.Game, profileNa
 			emit(WarningEvent{Scope: Scope{Op: OpUpdate}, Phase: UpdateWarning, Message: w})
 		}
 	}
+
+	// #678: the update is done; its mod's old versions beyond the setting
+	// go. Never fatal.
+	pruned, pruneWarnings := s.pruneAfterFlow(ctx, game, []domain.ModReference{{SourceID: newMod.SourceID, ModID: newMod.ID}}, Scope{Op: OpUpdate}, EventSink(emit))
+	result.CachePruned = pruned
+	result.Warnings = append(result.Warnings, pruneWarnings...)
 
 	emit(ModEvent{Scope: scope, Phase: UpdateModUpdated, Version: effectiveVersion})
 	return nil

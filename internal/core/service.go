@@ -120,7 +120,12 @@ type DownloadModResult struct {
 // serialized Service methods.
 type Service struct {
 	config *config.Config
-	db     *db.DB
+	// cacheKeep is cache.keep_previous_versions as the web UI last set it
+	// (#678), once cacheKeepSet: the setting a running server follows
+	// without re-reading config.yaml, which no flow reads past its start.
+	cacheKeep    atomic.Int64
+	cacheKeepSet atomic.Bool
+	db           *db.DB
 	// fileLists is the file-list store's in-memory half (#676,
 	// mod_file_lists.go).
 	fileLists fileListState

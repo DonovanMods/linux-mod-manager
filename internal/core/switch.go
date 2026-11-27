@@ -118,8 +118,12 @@ type SwitchPlan struct {
 	// none.
 	Heals []StoredFilesHeal `json:"heals,omitempty"`
 
-	NoChanges     bool `json:"no_changes"`     // To's mod set matches From's content-wise and no override changes (#631); only SetDefault is needed
-	AlreadyActive bool `json:"already_active"` // To is already the active default profile; nothing to plan
+	// CachePrune is what the prune that follows the switch frees (#678):
+	// the old cached versions, beyond cache.keep_previous_versions, of the
+	// mods it installs. A prediction; absent when it frees nothing.
+	CachePrune    *CachePruneSummary `json:"cache_prune,omitempty"`
+	NoChanges     bool               `json:"no_changes"`     // To's mod set matches From's content-wise and no override changes (#631); only SetDefault is needed
+	AlreadyActive bool               `json:"already_active"` // To is already the active default profile; nothing to plan
 
 	// FlagOnly is set when no single profile of the game is marked active
 	// (#445 review F2, ruling C): none of several profile files says
@@ -549,7 +553,27 @@ func (s *Service) planProfileSwitchSettled(ctx context.Context, game *domain.Gam
 	if unchecked > 0 {
 		plan.Warnings = append(plan.Warnings, uncheckedStoredFilesNote(unchecked))
 	}
+	plan.CachePrune = s.predictCachePrune(ctx, game, switchChanges(plan))
 	return plan, nil
+}
+
+// switchChanges is a switch plan's installs as prune changes, for its
+// prediction (convergeChanges' rule): one that replaces the target's own
+// row rolls back to that row's version, one the target has no row of is
+// new, and any other is left out.
+func switchChanges(plan *SwitchPlan) []pruneChange {
+	var out []pruneChange
+	for _, ref := range plan.ToInstall {
+		key := domain.ModKey(ref.SourceID, ref.ModID)
+		change := pruneChange{GameID: plan.GameID, Profile: plan.To, SourceID: ref.SourceID, ModID: ref.ModID, Version: ref.Version}
+		if prior, ok := plan.PriorVersions[key]; ok && prior.ProfileName == plan.To {
+			change.Previous = prior.Version
+		} else if _, had := plan.targetSnapshot[key]; had || plan.targetSnapshot == nil {
+			continue
+		}
+		out = append(out, change)
+	}
+	return out
 }
 
 // SwitchResult reports the outcome of ApplyProfileSwitch. As with
@@ -596,6 +620,10 @@ type SwitchResult struct {
 	Outcomes  []ProfileApplyOutcome `json:"outcomes,omitempty"`
 	Notes     []string              `json:"notes,omitempty"`
 	Warnings  []string              `json:"warnings,omitempty"`
+	// CachePruned is what the prune after the switch removed (#678): old
+	// cached versions of the mods it installed. Absent when it removed
+	// nothing.
+	CachePruned *CachePruneSummary `json:"cache_pruned,omitempty"`
 }
 
 // ApplyProfileSwitch executes a plan produced by PlanProfileSwitch: disables
@@ -1231,6 +1259,11 @@ func (s *Service) applyProfileSwitch(ctx context.Context, game *domain.Game, pla
 		result.Warnings = append(result.Warnings, w)
 		emit(WarningEvent{Scope: Scope{Op: OpSwitch}, Phase: SwitchInstallWarning, Message: w})
 	}
+
+	// #678: the old versions of what it installed go. Never fatal.
+	pruned, pruneWarnings := s.pruneAfterFlow(ctx, game, changedOutcomeMods(result.Outcomes), Scope{Op: OpSwitch}, sink)
+	result.CachePruned = pruned
+	result.Warnings = append(result.Warnings, pruneWarnings...)
 
 	return result, nil
 }

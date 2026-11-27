@@ -4635,6 +4635,50 @@ func TestJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #678: one cache entry a prune removes.
+			"cache_prune_entry",
+			goldenCachePruneEntry,
+		},
+		{
+			"cache_prune_skip",
+			core.CachePruneSkip{GameID: "skyrim-se", Reason: "reading snapshot before.json: unexpected end of JSON input"},
+		},
+		{
+			// #678: `lmm cache prune --dry-run --json`.
+			"cache_prune_plan",
+			core.CachePrunePlan{
+				KeepPreviousVersions: 3, Games: []string{"skyrim-se", "wow"},
+				Entries:  []core.CachePruneEntry{goldenCachePruneEntry, goldenCachePruneVariant},
+				Versions: 2, Bytes: 3072,
+				Skipped: []core.CachePruneSkip{{GameID: "wow", Reason: "reading profile raid of wow: yaml: line 3: did not find expected key"}},
+			},
+		},
+		{
+			// #678: `lmm cache prune --json`.
+			"cache_prune_result",
+			core.CachePruneResult{
+				Entries: []core.CachePruneEntry{goldenCachePruneEntry}, Versions: 1, Bytes: 2048,
+				Warnings: []string{"could not prune version 0.9 of Other Mod from the cache: permission denied"},
+			},
+		},
+		{
+			// #678: a flow's prune afterwards, on its plan and its result.
+			"cache_prune_summary",
+			core.CachePruneSummary{Versions: 1, Bytes: 2048, Entries: []core.CachePruneEntry{goldenCachePruneEntry}},
+		},
+		{
+			"cache_game_status",
+			goldenCacheGameStatus,
+		},
+		{
+			// #678: `lmm cache status --json`.
+			"cache_status",
+			core.CacheStatus{
+				KeepPreviousVersions: 3, Games: []core.CacheGameStatus{goldenCacheGameStatus},
+				Bytes: 1073741824, ReclaimableBytes: 536870912, ReclaimableVersions: 4,
+			},
+		},
+		{
 			"snapshot_delete_result",
 			core.SnapshotDeleteResult{Name: "before-tweaks", GameID: "skyrim-se", Deleted: true},
 		},
@@ -5316,4 +5360,23 @@ func sampleCuratorMixed() []core.CuratorMixedFiles {
 		{Version: "1.0", Files: []core.MixedVersionFile{{ID: "71", FileName: "curated-1.0.zip"}}},
 		{Version: "1.1", Files: []core.MixedVersionFile{{ID: "72", FileName: "curated-1.1.zip"}}},
 	}}}
+}
+
+// goldenCachePruneEntry is the cache prune goldens' plain entry (#678).
+var goldenCachePruneEntry = core.CachePruneEntry{
+	GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", ModName: "SkyUI",
+	Version: "5.1", Bytes: 2048,
+}
+
+// goldenCachePruneVariant is a variant entry: a FOMOD install's tree.
+var goldenCachePruneVariant = core.CachePruneEntry{
+	GameID: "skyrim-se", SourceID: "nexusmods", ModID: "12345", ModName: "SkyUI",
+	Version: "5.0", Variant: "abcdef123456", Bytes: 1024,
+}
+
+// goldenCacheGameStatus is one game's cache, shared with another game.
+var goldenCacheGameStatus = core.CacheGameStatus{
+	GameID: "skyrim-se", GameName: "Skyrim Special Edition", Path: "/home/user/.local/share/lmm/cache/skyrim-se",
+	SharedWith: []string{"skyrim-vr"}, Bytes: 1073741824, Mods: 12, Versions: 30,
+	ReclaimableBytes: 536870912, ReclaimableVersions: 4,
 }

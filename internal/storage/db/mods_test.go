@@ -430,3 +430,31 @@ func TestSetModFileSet_WritesFilesAndVariantTogether(t *testing.T) {
 
 	assert.ErrorIs(t, database.SetModFileSet(ctx, "nexusmods", "missing", "skyrim-se", "default", []string{"1"}, ""), domain.ErrModNotFound)
 }
+
+// TestGameVersionRows (#678): every installed row of one game, in every
+// profile, with the versions it names - what the cache prune protects.
+func TestGameVersionRows(t *testing.T) {
+	ctx := context.Background()
+	database, err := db.New(":memory:")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, database.Close()) }()
+
+	save := func(gameID, profile, modID, version string) {
+		t.Helper()
+		require.NoError(t, database.SaveInstalledMod(ctx, &domain.InstalledMod{
+			Mod:         domain.Mod{ID: modID, SourceID: "local", Name: modID, Version: version, GameID: gameID},
+			ProfileName: profile,
+		}))
+	}
+	save("sky2", "x", "k", "1.0")
+	save("sky", "p", "k", "1.0")
+	save("sky", "default", "other", "3.0")
+	require.NoError(t, database.UpdateModVersion(ctx, "local", "k", "sky", "p", "2.0", "abcdef123456"))
+
+	rows, err := database.GameVersionRows(ctx, "sky")
+	require.NoError(t, err)
+	assert.Equal(t, []db.GameVersionRow{
+		{SourceID: "local", ModID: "other", Name: "other", ModVersionRow: db.ModVersionRow{GameID: "sky", Profile: "default", Version: "3.0"}},
+		{SourceID: "local", ModID: "k", Name: "k", ModVersionRow: db.ModVersionRow{GameID: "sky", Profile: "p", Version: "2.0", Variant: "abcdef123456", PreviousVersion: "1.0"}},
+	}, rows)
+}

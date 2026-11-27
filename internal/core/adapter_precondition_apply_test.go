@@ -252,6 +252,7 @@ var uncheckedApplies = map[string]string{
 	"ApplyMergedPakRegen":    "no plan: it needs the adapter's compiler, which a refused adapter does not resolve",
 	"ApplyPluginEdit":        "deploys no mod: it writes the profile's plugins: block and the plugin list (TestPluginEditIsNoDeployUnderARefusingAdapter)",
 	"ApplyFileLoadOrderEdit": "deploys no mod: it writes the profile's load_orders: list and the game's list file (TestFileLoadOrderEditIsNoDeployUnderARefusingAdapter)",
+	"ApplyCachePrune":        "a removal of old cached versions: deploys nothing (TestRemovalPlansIgnoreTheAdapterPrecondition/cache_prune)",
 }
 
 // TestEveryApplyRechecksTheAdapterPrecondition plans each flow while the

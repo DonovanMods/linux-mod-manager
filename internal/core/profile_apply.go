@@ -111,7 +111,12 @@ type ProfileApplyPlan struct {
 	// ApplyProfileApply has nothing to do (the CLI prints "System already
 	// matches profile <name>." and stops without even syncing the merged
 	// pak, exactly as before).
-	NoChanges bool `json:"no_changes"`
+	// CachePrune is what the prune that follows the apply frees (#678):
+	// the old cached versions, beyond cache.keep_previous_versions, of the
+	// mods it installs or replaces. A prediction; absent when it frees
+	// nothing.
+	CachePrune *CachePruneSummary `json:"cache_prune,omitempty"`
+	NoChanges  bool               `json:"no_changes"`
 
 	// snapshot is ruling 5's staleness precondition: the installed-mod set
 	// this plan was computed from. ApplyProfileApply re-derives it and
@@ -280,6 +285,10 @@ type ProfileApplyResult struct {
 	Outcomes  []ProfileApplyOutcome `json:"outcomes,omitempty"`
 	Notes     []string              `json:"notes,omitempty"`
 	Warnings  []string              `json:"warnings,omitempty"`
+	// CachePruned is what the prune after the apply removed (#678): old
+	// cached versions of the mods it installed or replaced. Absent when it
+	// removed nothing.
+	CachePruned *CachePruneSummary `json:"cache_pruned,omitempty"`
 }
 
 // ProfileApplyOutcome is what ApplyProfileApply did with one mod (#470).
@@ -372,6 +381,7 @@ func (s *Service) PlanProfileApply(ctx context.Context, game *domain.Game, profi
 	}
 	// #638: the shared paths the apply hands on, named before it runs.
 	plan.Handoffs = s.planApplyHandOffs(ctx, game, plan)
+	plan.CachePrune = s.predictCachePrune(ctx, game, convergeChanges(game.ID, plan.Profile, plan.ToInstall, plan.snapshot))
 	return plan, nil
 }
 
@@ -1230,6 +1240,12 @@ func (s *Service) applyProfileApply(ctx context.Context, game *domain.Game, plan
 		result.Warnings = append(result.Warnings, w)
 		emit(WarningEvent{Scope: Scope{Op: OpProfileApply}, Phase: SwitchInstallWarning, Message: w})
 	}
+
+	// #678: the old versions of what it installed or replaced go. Never
+	// fatal.
+	pruned, pruneWarnings := s.pruneAfterFlow(ctx, game, changedOutcomeMods(result.Outcomes), Scope{Op: OpProfileApply}, sink)
+	result.CachePruned = pruned
+	result.Warnings = append(result.Warnings, pruneWarnings...)
 
 	return result, nil
 }
