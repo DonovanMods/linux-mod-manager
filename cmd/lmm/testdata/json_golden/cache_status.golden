@@ -1,0 +1,18 @@
+{
+  "keep_previous_versions": 3,
+  "games": [
+    {
+      "game_id": "g1",
+      "game_name": "Game",
+      "path": "/GOLDEN/cache/g1",
+      "bytes": 312,
+      "mods": 1,
+      "versions": 6,
+      "reclaimable_bytes": 104,
+      "reclaimable_versions": 2
+    }
+  ],
+  "bytes": 312,
+  "reclaimable_bytes": 104,
+  "reclaimable_versions": 2
+}

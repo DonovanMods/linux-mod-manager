@@ -804,10 +804,16 @@ func (s *Service) predictCachePrune(ctx context.Context, game *domain.Game, chan
 // slot. It never fails the flow: what it could not do comes back as
 // warnings, and a cache it could not judge is left whole. nil when it
 // removed nothing.
+//
+// It runs once the flow's work is done and is bounded by the mods the flow
+// changed, so it does not stop for the flow's cancellation: a cancelled
+// flow has already returned before reaching it, and one that finished
+// finishes its housekeeping too.
 func (s *Service) pruneAfterFlow(ctx context.Context, game *domain.Game, mods []domain.ModReference, scope Scope, sink EventSink) (*CachePruneSummary, []string) {
 	if len(mods) == 0 {
 		return nil, nil
 	}
+	ctx = context.WithoutCancel(ctx)
 	keep := s.CacheKeepPreviousVersions()
 	if keep < 0 {
 		return nil, nil
