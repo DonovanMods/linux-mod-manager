@@ -293,3 +293,31 @@ func TestReadProgressGate_EachPhaseIsGatedOnItsOwn(t *testing.T) {
 	assert.True(t, g.admit("convergence", 0, 0))
 	assert.False(t, (&readProgressGate{}).admit("", 0, 0), "an update check's positionless tick says nothing, as before")
 }
+
+// TestSummarizeJobEvent_NamesTheVerifyPhase (#677 review): a verify --fix
+// job's tray row took its phase only from a core.FlowEvent, which a
+// VerifyEvent is not, so its later passes read "1200 of 23236" with no pass
+// named. A progress tick's phase now rides on the frame, prefixed verify_
+// so it cannot be mistaken for a flow phase; a finding names none.
+func TestSummarizeJobEvent_NamesTheVerifyPhase(t *testing.T) {
+	frame := summarizeJobEvent("j1", "verify_fix", core.VerifyEvent{
+		Scope: core.Scope{Op: core.OpVerify, Index: 1200, Total: 23236},
+		Kind:  core.VerifyEvProgress, Phase: core.VerifyPhaseDeployed,
+	})
+	assert.Equal(t, "verify_deployed", frame.Phase)
+	assert.Equal(t, 1200, frame.Index)
+	assert.Equal(t, 23236, frame.Total)
+
+	for _, phase := range []core.VerifyPhase{
+		core.VerifyPhaseVersions, core.VerifyPhaseFiles, core.VerifyPhaseDeployed,
+		core.VerifyPhaseBlocked, core.VerifyPhaseRecords, core.VerifyPhaseConvergence,
+	} {
+		f := summarizeJobEvent("j1", "verify_fix", core.VerifyEvent{Kind: core.VerifyEvProgress, Phase: phase})
+		assert.Equal(t, "verify_"+string(phase), f.Phase)
+	}
+
+	finding := summarizeJobEvent("j1", "verify_fix", core.VerifyEvent{Kind: core.VerifyEvFinding, Finding: core.VerifyFinding{Status: "ok"}})
+	assert.Empty(t, finding.Phase)
+	unnamed := summarizeJobEvent("j1", "verify_fix", core.VerifyEvent{Kind: core.VerifyEvProgress})
+	assert.Empty(t, unnamed.Phase, "a tick naming no phase names none")
+}

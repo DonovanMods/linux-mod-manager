@@ -37,6 +37,21 @@ const phasePrefixes = [
   ["source_", ""],
 ];
 
+/**
+ * verifyPhaseLabels names each verify pass (issue 677: core.VerifyPhase)
+ * the one way both places that show it read: the Health card's loading line
+ * (loading.js) and the activity tray's row for a verify --fix job, whose
+ * frames carry the pass as "verify_" + its name (activity.go).
+ */
+export const verifyPhaseLabels = {
+  versions: "Verifying mods",
+  files: "Checking downloaded files",
+  deployed: "Checking deployed files",
+  blocked: "Checking mods for paths lmm could not deploy",
+  records: "Checking the profile's deployment records",
+  convergence: "Checking for stale deployed files",
+};
+
 // phaseLabels names the few phases whose humanized name would read wrong.
 // issue 664: an update's steps read "Extracting · OpenMap", "Updated ·
 // OpenMap" - not "Archive extracting" (archive_extracting is one phase for
@@ -61,6 +76,13 @@ const phaseLabels = {
   update_batch_item_failed: "Failed",
   // issue 666: an import going on to switch to the profile it imported.
   import_switching: "Switching to profile",
+  // issue 677: a verify --fix job's passes, as the Health line says them.
+  ...Object.fromEntries(
+    Object.entries(verifyPhaseLabels).map(([phase, label]) => [
+      `verify_${phase}`,
+      label,
+    ]),
+  ),
 };
 
 /**

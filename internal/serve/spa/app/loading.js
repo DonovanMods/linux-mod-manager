@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "./render.js";
 import { loadingMinShownMillis, loadingShowDelayMillis } from "./timers.js";
 import { countOf } from "./modrows.js";
+import { verifyPhaseLabels } from "./progress.js";
 
 /**
  * useShownWhile is true while `active` has held for the show delay, and
@@ -100,28 +101,22 @@ function pendingReadBase(read, { mods, progress }) {
 /**
  * verifyPhaseLabel is the Health read's line for the verify pass its newest
  * frame names (issue 677: core.VerifyPhase, carried as read_progress.go's
- * phase). The version pass - and a frame naming none - counts mods; the
- * later passes count what they walk, or say only what they are doing when
- * they have no position. Without them the line held the version pass's
- * last tick ("16/16") for most of a long verify.
+ * phase), in the words the activity tray uses for a verify --fix job's
+ * passes (progress.js's verifyPhaseLabels). The version pass - and a frame
+ * naming none - counts mods; the later passes count what they walk, or say
+ * only what they are doing when they have no position. A phase this page
+ * does not know still has its position said, without calling it mods.
+ * Without them the line held the version pass's last tick ("16/16") for
+ * most of a long verify.
  */
 function verifyPhaseLabel(phase, position, total) {
-  switch (phase) {
-    case "files":
-      return `Checking downloaded files${position}…`;
-    case "deployed":
-      return `Checking deployed files${position}…`;
-    case "blocked":
-      return `Checking mods for paths lmm could not deploy${position}…`;
-    case "records":
-      return "Checking the profile's deployment records…";
-    case "convergence":
-      return "Checking for stale deployed files…";
-    default:
-      return total
-        ? `Verifying ${countOf(total, "mod")}${position}…`
-        : "Verifying your mods…";
+  if (!phase || phase === "versions") {
+    return total
+      ? `Verifying ${countOf(total, "mod")}${position}…`
+      : "Verifying your mods…";
   }
+  const label = verifyPhaseLabels[phase] ?? "Verifying your mods";
+  return `${label}${position}…`;
 }
 
 /** groupDigits is n with its thousands grouped ("23,236"): a deployed-files

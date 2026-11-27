@@ -1466,16 +1466,19 @@ conflicts`, `lmm mod files`, snapshots, and a profile override on such a
   deployed-file row of the game, so the check grew with the square of the
   profile's size: about 37 of the 45 seconds a verify took on a World of
   Warcraft profile with 23,000 deployed files. A new index (schema
-  version 31, added automatically on first run) makes each lookup
-  constant-time; on a synthetic profile of 20,000 files that step went
+  version 31, added automatically on first run) takes each lookup
+  straight to that path's rows, so its cost barely grows with the
+  profile; on a synthetic profile of 20,000 files that step went
   from 35 seconds to under half a second. Deploys and purges use the
   same lookup, so they speed up too. The steps after the version checks
   now report progress as well: the Health card's loading line names
   each step with its position ("Checking deployed files
   (1,200/23,236)…") instead of holding the last version check
-  ("16/16"), and `lmm verify -v` prints a line as each starts. A verify
-  progress event, and the web UI's `read_progress` frame, gain an
-  additive `phase` field (`versions`, `files`, `deployed`, `blocked`,
+  ("16/16"), the activity tray's row for a **Repair** (`verify --fix`)
+  job names the step too, and `lmm verify -v` prints a line as each
+  starts. A verify progress event, the web UI's `read_progress` frame and
+  its job progress frame (as `verify_<phase>`) gain an additive `phase`
+  field (`versions`, `files`, `deployed`, `blocked`,
   `records`, `convergence`), and the later steps' events are throttled
   to about one per percent.
 

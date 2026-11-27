@@ -106,7 +106,7 @@ func TestEventGoldens(t *testing.T) {
 		{
 			"verify",
 			core.VerifyEvent{
-				Scope: sampleScope(core.OpVerify), Kind: core.VerifyEvFinding, Phase: core.VerifyPhaseDeployed, HasFiles: true,
+				Scope: sampleScope(core.OpVerify), Kind: core.VerifyEvFinding, HasFiles: true,
 				Finding: core.VerifyFinding{
 					ModID: "42", ModName: "Sample Mod", FileID: "f1", Status: "ok",
 					Note: "re-downloaded to populate checksum", Recorded: "1.2.2", Effective: "1.2.3", Version: "1.2.3",
@@ -172,4 +172,24 @@ func TestEventGoldens(t *testing.T) {
 			require.NoError(t, json.Unmarshal(env.Data, &data), "%s event data must be a JSON object", tt.ev.EventType())
 		})
 	}
+}
+
+// TestVerifyProgressEventGolden pins a verify progress tick's envelope
+// (#677): the phase a later pass reports, with its position. The table
+// above keys its goldens by EventType, which a finding and a progress tick
+// share, so this one has a golden of its own (-update-events records it).
+func TestVerifyProgressEventGolden(t *testing.T) {
+	b, err := core.MarshalEvent(core.VerifyEvent{
+		Scope: core.Scope{Op: core.OpVerify, Index: 1200, Total: 23236},
+		Kind:  core.VerifyEvProgress, Phase: core.VerifyPhaseDeployed,
+	})
+	require.NoError(t, err)
+	path := filepath.Join("testdata", "events", "verify_progress.golden")
+	if *updateEventGoldens {
+		require.NoError(t, os.WriteFile(path, append(b, '\n'), 0o644))
+		return
+	}
+	want, err := os.ReadFile(path)
+	require.NoError(t, err, "golden %s missing - record it with -update-events", path)
+	assert.Equal(t, string(want), string(b)+"\n")
 }
