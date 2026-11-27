@@ -711,6 +711,12 @@ func (s *Service) scanLocation(ctx context.Context, loc cacheLocation, scan prun
 			out.skipped = "reading what is deployed: " + err.Error()
 			refs = nil
 		}
+		// A plan's prediction: the flow redeploys each mod it changes, so
+		// what those mods have deployed now says nothing about afterwards
+		// (the prune that runs after the flow reads the game again).
+		for _, c := range scan.changes {
+			delete(deployed, cache.ModDirName(c.SourceID, c.ModID))
+		}
 	}
 	for _, m := range mods {
 		if strings.HasPrefix(m.Dir, domain.SourceMerged+"-") || len(m.Entries) == 0 {
