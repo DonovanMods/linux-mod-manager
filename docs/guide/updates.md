@@ -29,8 +29,12 @@ few seconds. The rest of the page doesn't wait for it. While the check
 runs, a line above the cards says what it is doing and how far it has got,
 for example "Checking 42 mods for updates (17/42)…". The Updates card
 appears when the check finishes. The verify behind the **Health** card
-shows the same kind of line ("Verifying 42 mods…"). Switching game or
-profile shows these lines too, under the new profile's own library.
+shows the same kind of line ("Verifying 42 mods…"). After checking the mods
+against their sites, the verify checks the files it deployed, and the line
+names each step and its count, for example "Checking deployed files
+(1,200/23,236)…". In the terminal, `lmm verify -v` prints a line as each of
+those steps starts. Switching game or profile shows these lines too, under
+the new profile's own library.
 
 ### Mods that haven't changed
 

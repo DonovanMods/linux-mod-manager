@@ -580,8 +580,35 @@ func renderVerifyEvent(ev core.VerifyEvent) {
 		}
 
 	case core.VerifyEvProgress:
-		// Not rendered by the CLI (#224).
+		// #677: -v says which pass the run is in as each starts - a pass's
+		// first tick is its Index 1, or 0 for one with no position. Every
+		// later tick is the web UI's (#224).
+		if verbose && ev.Index <= 1 {
+			if line := verifyPhaseLine(ev); line != "" {
+				fmt.Printf("  (verbose) %s\n", line)
+			}
+		}
 	}
+}
+
+// verifyPhaseLine is what `lmm verify -v` says as a verify pass starts
+// (#677), or "" for a tick that names no phase.
+func verifyPhaseLine(ev core.VerifyEvent) string {
+	switch ev.Phase {
+	case core.VerifyPhaseVersions:
+		return fmt.Sprintf("Checking %d mod(s) against their sources...", ev.Total)
+	case core.VerifyPhaseFiles:
+		return fmt.Sprintf("Checking %d downloaded file(s) against the cache...", ev.Total)
+	case core.VerifyPhaseDeployed:
+		return fmt.Sprintf("Checking %d deployed file(s)...", ev.Total)
+	case core.VerifyPhaseBlocked:
+		return fmt.Sprintf("Checking %d mod(s) for paths lmm could not deploy...", ev.Total)
+	case core.VerifyPhaseRecords:
+		return "Checking the profile's deployment records..."
+	case core.VerifyPhaseConvergence:
+		return "Checking for stale deployed files..."
+	}
+	return ""
 }
 
 // renderVerifyFinding prints ev.Finding's main line, keyed on

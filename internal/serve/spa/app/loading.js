@@ -78,16 +78,16 @@ export function pendingReadLabel(read, { mods = null, progress = null } = {}) {
 function pendingReadBase(read, { mods, progress }) {
   const total = progress?.total > 0 ? progress.total : mods;
   const position =
-    progress?.total > 0 ? ` (${progress.index}/${progress.total})` : "";
+    progress?.total > 0
+      ? ` (${groupDigits(progress.index)}/${groupDigits(progress.total)})`
+      : "";
   switch (read) {
     case "updates":
       return total
         ? `Checking ${countOf(total, "mod")} for updates${position}…`
         : "Checking for updates…";
     case "health":
-      return total
-        ? `Verifying ${countOf(total, "mod")}${position}…`
-        : "Verifying your mods…";
+      return verifyPhaseLabel(progress?.phase, position, total);
     case "conflicts":
       return "Checking for file conflicts…";
     case "snapshots":
@@ -95,6 +95,40 @@ function pendingReadBase(read, { mods, progress }) {
     default:
       return "Loading…";
   }
+}
+
+/**
+ * verifyPhaseLabel is the Health read's line for the verify pass its newest
+ * frame names (issue 677: core.VerifyPhase, carried as read_progress.go's
+ * phase). The version pass - and a frame naming none - counts mods; the
+ * later passes count what they walk, or say only what they are doing when
+ * they have no position. Without them the line held the version pass's
+ * last tick ("16/16") for most of a long verify.
+ */
+function verifyPhaseLabel(phase, position, total) {
+  switch (phase) {
+    case "files":
+      return `Checking downloaded files${position}…`;
+    case "deployed":
+      return `Checking deployed files${position}…`;
+    case "blocked":
+      return `Checking mods for paths lmm could not deploy${position}…`;
+    case "records":
+      return "Checking the profile's deployment records…";
+    case "convergence":
+      return "Checking for stale deployed files…";
+    default:
+      return total
+        ? `Verifying ${countOf(total, "mod")}${position}…`
+        : "Verifying your mods…";
+  }
+}
+
+/** groupDigits is n with its thousands grouped ("23,236"): a deployed-files
+ * pass counts tens of thousands. One fixed grouping, as the rest of the
+ * page's English is fixed. */
+function groupDigits(n) {
+  return Number(n).toLocaleString("en-US");
 }
 
 /** pendingReadDone is what the live region says once read has answered,

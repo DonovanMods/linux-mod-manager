@@ -106,7 +106,7 @@ func TestEventGoldens(t *testing.T) {
 		{
 			"verify",
 			core.VerifyEvent{
-				Scope: sampleScope(core.OpVerify), Kind: core.VerifyEvFinding, HasFiles: true,
+				Scope: sampleScope(core.OpVerify), Kind: core.VerifyEvFinding, Phase: core.VerifyPhaseDeployed, HasFiles: true,
 				Finding: core.VerifyFinding{
 					ModID: "42", ModName: "Sample Mod", FileID: "f1", Status: "ok",
 					Note: "re-downloaded to populate checksum", Recorded: "1.2.2", Effective: "1.2.3", Version: "1.2.3",

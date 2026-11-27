@@ -321,6 +321,20 @@ func TestServeJSONGoldens(t *testing.T) {
 			},
 		},
 		{
+			// #677: a verify's frame names the pass it is in; the
+			// deployed-content pass counts files, not mods.
+			"read_progress_frame_phase",
+			readProgressFrame{
+				Token:   "r1a2b3",
+				Read:    readHealth,
+				GameID:  "g1",
+				Profile: "default",
+				Phase:   string(core.VerifyPhaseDeployed),
+				Index:   1200,
+				Total:   23236,
+			},
+		},
+		{
 			"plan_response",
 			planResponse{
 				PlanID: "0123456789abcdef0123456789abcdef",

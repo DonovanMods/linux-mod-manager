@@ -435,7 +435,36 @@ const (
 	VerifyEvRepairDetail                        // indented sub-line; Detail pre-formatted, Fixed tone flag
 	VerifyEvSyncWarning                         // stderr-bound merged-pak sync warning (Detail)
 	VerifyEvVerbose                             // verbose-gated diagnostic (Detail)
-	VerifyEvProgress                            // Full-tier network tick (Scope.Index/Total/ModName)
+	VerifyEvProgress                            // a pass's position (Phase, Scope.Index/Total, Scope.ModName for the version pass)
+)
+
+// VerifyPhase names the pass a VerifyEvProgress tick reports on (#677), so
+// a frontend can say what a long verify is doing rather than holding the
+// version pass's last tick for the rest of the run. The passes report in
+// this order; a run reports only the ones it runs (no versions below the
+// full tier, no files on a profile with nothing checksummed).
+type VerifyPhase string
+
+// The VerifyPhase values. Index/Total count what the pass walks; a phase
+// with nothing to count reports one tick with neither.
+const (
+	// VerifyPhaseVersions is the full tier's version pass: one tick per
+	// installed mod, before it is asked about, with its name.
+	VerifyPhaseVersions VerifyPhase = "versions"
+	// VerifyPhaseFiles is the per-file walk over the profile's checksummed
+	// file records.
+	VerifyPhaseFiles VerifyPhase = "files"
+	// VerifyPhaseDeployed is the deployed-content pass over the profile's
+	// deployed files, each judged against what lmm deployed.
+	VerifyPhaseDeployed VerifyPhase = "deployed"
+	// VerifyPhaseBlocked is the blocked-paths pass over the installed mods,
+	// each one's files looked for where lmm deployed none.
+	VerifyPhaseBlocked VerifyPhase = "blocked"
+	// VerifyPhaseRecords is the records pass: one tick, no position.
+	VerifyPhaseRecords VerifyPhase = "records"
+	// VerifyPhaseConvergence is the deploy convergence that closes the run:
+	// one tick, no position.
+	VerifyPhaseConvergence VerifyPhase = "convergence"
 )
 
 // verifyEventKindNames maps each VerifyEventKind to its wire name. Keep in
@@ -469,12 +498,13 @@ func (k *VerifyEventKind) UnmarshalText(b []byte) error {
 
 // VerifyEvent is emitted via a verify run's EventSink as the engine works,
 // so a caller can render incrementally instead of waiting for the final
-// VerifyResult. Scope.Op is always OpVerify; Scope.Index/Total/ModName carry
-// a VerifyEvProgress tick's position (verifyRun.emitEv fills Op, callers
-// fill the rest of Scope where relevant).
+// VerifyResult. Scope.Op is always OpVerify; Phase and Scope.Index/Total/
+// ModName carry a VerifyEvProgress tick's position (verifyRun.emitEv fills
+// Op, callers fill the rest of Scope where relevant).
 type VerifyEvent struct {
 	Scope
 	Kind     VerifyEventKind `json:"kind"`
+	Phase    VerifyPhase     `json:"phase,omitempty"` // VerifyEvProgress: the pass reporting (#677)
 	HasFiles bool            `json:"has_files,omitempty"`
 	Mods     int             `json:"mods,omitempty"` // VerifyEvBegin: VerifyResult.Mods (#429)
 	Finding  VerifyFinding   `json:"finding"`        // valid for VerifyEvFinding
@@ -524,6 +554,49 @@ type verifyRun struct {
 	// rows recorded under another mod_path, read at most once per run.
 	lost     map[string]map[string]string
 	stranded map[domain.DeployPath]bool
+
+	// progressGate throttles the later passes' ticks (#677).
+	progressGate verifyProgressGate
+}
+
+// verifyProgressGate caps how many VerifyEvProgress ticks one pass emits: a
+// tick when the pass's whole percent moves, plus its first and last - at
+// most 101 for a pass over any number of files, where a 23k-file pass
+// ticking every file would flood a job's event ring and every sink.
+type verifyProgressGate struct {
+	phase VerifyPhase
+	seen  bool
+	last  int
+}
+
+// admit reports whether phase's tick index of total should be emitted. A
+// new phase always is; a phase with no position only that once.
+func (g *verifyProgressGate) admit(phase VerifyPhase, index, total int) bool {
+	if !g.seen || phase != g.phase {
+		g.phase, g.seen, g.last = phase, true, -1
+	}
+	if total <= 0 {
+		if g.last == -1 {
+			g.last = 0
+			return true
+		}
+		return false
+	}
+	pct := index * 100 / total
+	if pct == g.last && index != total {
+		return false
+	}
+	g.last = pct
+	return true
+}
+
+// progress emits phase's tick index of total, through the gate. A phase
+// with nothing to count passes 0, 0.
+func (r *verifyRun) progress(phase VerifyPhase, index, total int) {
+	if r.sink == nil || !r.progressGate.admit(phase, index, total) {
+		return
+	}
+	r.emitEv(VerifyEvent{Kind: VerifyEvProgress, Phase: phase, Scope: Scope{Index: index, Total: total}})
 }
 
 // lostFiles is the files of mod whose cache entry no longer holds them
@@ -1203,7 +1276,8 @@ func (r *verifyRun) deployedContentPass(installedMods []domain.InstalledMod) err
 			return byKey[domain.ModKey(st.SourceID, st.ModID)].fileFor(st, rel)
 		},
 	}
-	for _, row := range rows {
+	for i, row := range rows {
+		r.progress(VerifyPhaseDeployed, i+1, len(rows))
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}
@@ -1294,7 +1368,8 @@ func (r *verifyRun) blockedPathsPass(installedMods []domain.InstalledMod, rows [
 	}
 	gameCache := r.svc.GetGameCache(r.game)
 	installer := r.svc.getInstaller(r.game)
-	for _, m := range installedMods {
+	for i, m := range installedMods {
+		r.progress(VerifyPhaseBlocked, i+1, len(installedMods))
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}
@@ -1637,6 +1712,7 @@ func (r *verifyRun) syncMergedPakPass() {
 // here the same way every other per-item problem in this engine is: a
 // skipped row plus a warning, not a fatal verify failure.
 func (r *verifyRun) convergencePass() {
+	r.progress(VerifyPhaseConvergence, 0, 0)
 	convResult, convErr := r.svc.convergeDeployedFiles(r.ctx, r.game, r.profile, !r.opts.Fix)
 	if convResult != nil {
 		r.lastCopyFindings(convResult.lastCopies)
@@ -1782,7 +1858,8 @@ func (r *verifyRun) fileCountPrePass(files []DeployedFile) error {
 // in versionPass below).
 func (r *verifyRun) perFileWalk(files []DeployedFile, prof *domain.Profile) error {
 	gameCache := r.svc.GetGameCache(r.game)
-	for _, f := range files {
+	for i, f := range files {
+		r.progress(VerifyPhaseFiles, i+1, len(files))
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}
@@ -2092,8 +2169,8 @@ func (r *verifyRun) conversionOutcomesPass(installedMods []domain.InstalledMod) 
 // opts.Tier == VerifyFull - this is the engine's one network-touching
 // phase, and the only one skipped entirely under VerifyLocal.
 //
-// Emits VerifyEvProgress at the top of every mod's iteration (a new event
-// not currently rendered by the CLI) and honors ctx cancellation between
+// Emits VerifyEvProgress (VerifyPhaseVersions) at the top of every mod's
+// iteration, unthrottled - one per mod - and honors ctx cancellation between
 // mods: on cancellation the loop stops and returns
 // ctx.Err(), leaving the caller (verify) to return the partial result
 // already accumulated rather than a phantom "everything checked out"
@@ -2121,7 +2198,7 @@ func (r *verifyRun) versionPass(installedMods []domain.InstalledMod, prof *domai
 
 	for i := range installedMods {
 		mod := &installedMods[i]
-		r.emitEv(VerifyEvent{Kind: VerifyEvProgress, Scope: Scope{Index: i + 1, Total: len(installedMods), ModName: mod.Name}})
+		r.emitEv(VerifyEvent{Kind: VerifyEvProgress, Phase: VerifyPhaseVersions, Scope: Scope{Index: i + 1, Total: len(installedMods), ModName: mod.Name}})
 		if err := r.ctx.Err(); err != nil {
 			return err
 		}
